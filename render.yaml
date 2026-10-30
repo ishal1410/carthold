@@ -2,7 +2,7 @@
 # Secrets use sync: false: Render asks for the value in the dashboard at Blueprint creation and never stores it here.
 services:
   - type: web
-    name: agentguard
+    name: carthold
     runtime: node
     plan: free
     rootDir: web
