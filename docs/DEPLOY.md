@@ -1,0 +1,77 @@
+# Deploying AgentGuard
+
+There are two steps: publish a clean public repo, then deploy it to Render's free plan from `render.yaml`.
+Nothing in this repo pushes or deploys on its own. You run every step below yourself.
+
+## 1. Publish a clean public repo
+
+Older commits contain a local file path in `BRIEF.md`. That path is removed in HEAD but is still in the history,
+so never push this repo's history to a public remote. Publish a copy of HEAD with no history instead:
+
+```bash
+bash scripts/publish-clean.sh --dry-run        # export HEAD and scan it, then delete the copy
+bash scripts/publish-clean.sh ../agentguard-public
+```
+
+The script exports `HEAD` with `git archive`, so uncommitted changes are left out. It then scans the copy for local
+paths (Windows user-profile and app-data folders, the Windows username), email addresses, key-shaped strings and `.env` files, and stops
+if it finds any. If the scan is clean, it makes a single commit using your existing git identity (the GitHub noreply
+email). It does not push. The script prints the next steps:
+
+```bash
+cd ../agentguard-public
+gh repo create agentguard --public --source . --remote origin
+git push -u origin main
+```
+
+## 2. Deploy on Render (free plan)
+
+1. Go to https://dashboard.render.com, choose **New**, then **Blueprint**, and connect the public repo. Render reads `render.yaml`
+   (rootDir `web`, `npm ci && npm run build`, `npm start`, Node 22).
+2. Render asks for the `sync: false` values. Paste these:
+   - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`: sandbox app at https://developer.paypal.com/dashboard/applications/sandbox
+   - `GEMINI_API_KEY`: https://aistudio.google.com/apikey
+   - `PUBLIC_ORIGIN`: leave it empty for now.
+
+   These values are set by the Blueprint: `PAYPAL_ENVIRONMENT=SANDBOX`, `TRUSTED_PROXY_HOPS=1`, `LIVE_RUNS_PER_DAY=60`.
+3. Click **Apply** and wait for the first deploy. Then note the URL, for example `https://agentguard-xxxx.onrender.com`.
+4. Open the service's **Environment** page, set `PUBLIC_ORIGIN` to that exact URL (https, no trailing slash) and save.
+   Render redeploys. After that, POST routes accept only browser requests whose Origin equals this value.
+
+### Verify
+
+```bash
+URL=https://agentguard-xxxx.onrender.com
+curl -s -o /dev/null -w "%{http_code}\n" $URL/          # expect 200 (the first request after sleep can take ~1 min)
+```
+
+**TRUSTED_PROXY_HOPS check.** The limit is 6 runs per IP per 10 minutes. Send 7 simulated runs, each with a different
+spoofed `X-Forwarded-For`:
+
+```bash
+for i in 1 2 3 4 5 6 7; do curl -s -o /dev/null -w "%{http_code} " -X POST $URL/api/runs \
+  -H "content-type: application/json" -H "x-forwarded-for: 10.0.0.$i" \
+  -d '{"userRequest":"buy a mug","mode":"redteam"}'; done; echo
+```
+
+- The result should be `201 201 201 201 201 201 429`. The spoofed header was ignored and your real IP was rate-limited.
+- If you get seven `201`s, the client-supplied header is being trusted, so `TRUSTED_PROXY_HOPS` is too high for your setup.
+  Use `1` behind Render alone, or `2` with a CDN such as Cloudflare in front.
+- `redteam` runs use a scripted agent and do not count against `LIVE_RUNS_PER_DAY`. A run starts as soon as it is
+  created, though, so the guard can still make PayPal sandbox and inspector LLM calls. The 6 accepted runs cost
+  that much.
+- This test uses up your own run limit for 10 minutes.
+
+Finally, open the site in a browser and run one **live** run end to end.
+
+## Operating notes
+
+- **Warm-up.** Free services sleep after about 15 minutes without traffic, and the next request takes about a minute to
+  wake the service. Before a demo or a judging window, open the URL a minute or two ahead.
+- **Quota.** `LIVE_RUNS_PER_DAY` caps real Gemini and PayPal runs across all users per UTC day. After the cap is hit,
+  users see a 429 and are offered the simulated run. The counter is held in memory, so it resets when the service
+  sleeps or redeploys. Lower the value if your Gemini free-tier quota is tight.
+- **Single instance.** The rate limits are in-process, so keep the service at one instance.
+- **Rollback.** In the Render dashboard, open **Events**, pick a previous deploy and choose **Rollback**. To take the app offline,
+  open **Settings** and choose **Suspend**.
+- **Rotating keys.** Change the value on the **Environment** page and Render redeploys. Never commit `.env.local`.

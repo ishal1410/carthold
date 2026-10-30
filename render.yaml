@@ -1,0 +1,29 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec). Free web service for the Next.js app in web/.
+# Secrets use sync: false: Render asks for the value in the dashboard at Blueprint creation and never stores it here.
+services:
+  - type: web
+    name: agentguard
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    startCommand: npm start # next start binds 0.0.0.0 and reads $PORT, which Render sets
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION # web/package.json engines: >=20.9.0
+        value: "22"
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PAYPAL_ENVIRONMENT
+        value: SANDBOX
+      - key: TRUSTED_PROXY_HOPS # Render's proxy is the only hop; 2 if a CDN sits in front
+        value: "1"
+      - key: LIVE_RUNS_PER_DAY # global daily cap on real Gemini + PayPal runs
+        value: "60"
+      - key: PUBLIC_ORIGIN # set after the first deploy to https://<service>.onrender.com (no trailing slash)
+        sync: false
