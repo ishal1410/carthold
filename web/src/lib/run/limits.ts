@@ -25,6 +25,12 @@ export const resetLimits = () => void (g.__cartholdLimits = fresh());
  * Put a CDN (e.g. Cloudflare) in front and you need TRUSTED_PROXY_HOPS=2.
  */
 export function clientIp(req: Request): string {
+  // Render sits behind Cloudflare and only appends to x-forwarded-for (live check 2026-10-30: 7 spoofed XFF requests all got 201).
+  // Cloudflare overwrites True-Client-IP / CF-Connecting-IP, so on Render set CLIENT_IP_HEADER=true-client-ip.
+  // https://community.render.com/t/accessing-client-ips-in-a-node-express-app/36282
+  const named = process.env.CLIENT_IP_HEADER?.trim();
+  const direct = named ? req.headers.get(named)?.split(",")[0]?.trim() : undefined;
+  if (direct) return direct;
   const hops = req.headers.get("x-forwarded-for")?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
   if (!hops.length) return "local";
   const n = Math.max(1, Math.floor(Number(process.env.TRUSTED_PROXY_HOPS ?? 1)) || 1);

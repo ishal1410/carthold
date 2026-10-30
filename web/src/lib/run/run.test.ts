@@ -289,6 +289,19 @@ describe("R2 hardening", () => {
     expect(pulls).toBeLessThan(10);
   });
 
+  it("G2: CLIENT_IP_HEADER (e.g. true-client-ip set by Cloudflare on Render) wins over x-forwarded-for", () => {
+    const r = (h: Record<string, string>) => new Request("http://x", { headers: h });
+    vi.stubEnv("CLIENT_IP_HEADER", "true-client-ip");
+    try {
+      expect(clientIp(r({ "true-client-ip": "5.5.5.5", "x-forwarded-for": "6.6.6.6, 7.7.7.7" }))).toBe("5.5.5.5");
+      expect(clientIp(r({ "true-client-ip": " 5.5.5.5 , 1.1.1.1" }))).toBe("5.5.5.5");
+      // header missing: fall back to the x-forwarded-for rule
+      expect(clientIp(r({ "x-forwarded-for": "6.6.6.6, 9.9.9.9" }))).toBe("9.9.9.9");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("G: client IP is TRUSTED_PROXY_HOPS from the right of x-forwarded-for; spoofed prefix ignored", () => {
     const r = (xff?: string) => new Request("http://x", { headers: xff ? { "x-forwarded-for": xff } : {} });
     expect(clientIp(r())).toBe("local");

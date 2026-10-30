@@ -21,7 +21,9 @@ services:
         sync: false
       - key: PAYPAL_ENVIRONMENT
         value: SANDBOX
-      - key: TRUSTED_PROXY_HOPS # Render's proxy is the only hop; 2 if a CDN sits in front
+      - key: CLIENT_IP_HEADER # Cloudflare (in front of Render) overwrites this with the real client IP; XFF is only appended to
+        value: true-client-ip
+      - key: TRUSTED_PROXY_HOPS # fallback only, when CLIENT_IP_HEADER is absent
         value: "1"
       - key: LIVE_RUNS_PER_DAY # global daily cap on real Gemini + PayPal runs
         value: "60"
