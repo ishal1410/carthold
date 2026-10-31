@@ -4,7 +4,7 @@ import { artLabel, barlow, barlowCondensed, DemoFooter, Hidden } from "./shared"
 // Palette: pine #1E3A2B, lichen #E4E9DA, moss #8FA77A, blaze #E8B931, bark #2E2620
 const contours = Array.from({ length: 9 }, (_, i) => i);
 
-export default function Trailhead({ store }: { store: Store }) {
+export default function Northpine({ store }: { store: Store }) {
   const p = store.featured;
   return (
     <div className={`${barlow.className} min-h-screen bg-[#E4E9DA] text-[#2E2620]`}>

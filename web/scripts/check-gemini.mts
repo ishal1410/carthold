@@ -3,7 +3,7 @@ import nextEnv from "@next/env";
 
 nextEnv.loadEnvConfig(process.cwd());
 const res = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/${process.argv[2] ?? "gemini-flash-lite-latest"}:generateContent`,
+  `https://generativelanguage.googleapis.com/v1beta/models/${process.argv[2] ?? "gemini-3.5-flash-lite"}:generateContent`,
   {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY ?? "" },

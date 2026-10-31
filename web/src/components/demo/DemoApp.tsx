@@ -28,7 +28,7 @@ const MANDATE: Omit<Mandate, "userRequest"> = {
   budgetUsd: 100,
   perItemCapUsd: 60,
   approvalThresholdUsd: 25,
-  merchantAllowlist: ["Trailhead Outfitters", "Brew & Bean", "GiftHub Deals"],
+  merchantAllowlist: ["Northpine Outfitters", "Brew & Bean", "Giftlane Deals"],
   maxQuantity: 2,
 };
 const MAX_Q = 300; // same cap as the server's userRequest
@@ -44,7 +44,7 @@ const settled = (g: GuardState) => g.pendingHolds.length === 0 && (g.unknownRows
 const slugFor = (merchant: string) => stores.find((s) => s.name.toLowerCase() === merchant.toLowerCase())?.slug;
 
 const RUN_ERRORS: Record<number, string> = {
-  403: "The server refused this run (cross-site request).",
+  403: "The server rejected this run (cross-site request).",
   413: "That request is too long.",
   415: "The server rejected the request format.",
   429: "Too many runs right now. Wait a minute and try again.",
@@ -60,7 +60,7 @@ function Demo({ fixture }: { fixture: boolean }) {
   const params = useSearchParams();
   // ?run=<id>&mode=<mode> survives a refresh: we reconnect and the server replays the run (#14).
   const [initialRun] = useState(() => (fixture ? null : params.get("run")));
-  const [initialMode] = useState<Mode>(() => (fixture || params.get("mode") === "redteam" ? "redteam" : "live"));
+  const [initialMode] = useState<Mode>(() => (!fixture && params.get("mode") === "live" ? "live" : "redteam"));
   // ?q= restores the run's request text after a refresh (FINDINGS-2 QA new 8).
   const [request, setRequest] = useState(() => (fixture ? FIXTURE_REQUEST : (params.get("q")?.slice(0, MAX_Q) ?? PRESETS[1].text)));
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -373,7 +373,7 @@ function Kpis({ guard }: { guard: GuardState }) {
       <div className="min-w-0">
         <dt className="flex items-center gap-1.5 text-2xs text-ink-muted">
           <Ban aria-hidden strokeWidth={1.5} className="size-3.5 text-blocked" />
-          Stopped
+          Blocked
         </dt>
         <dd className={cx("text-base md:text-xl", stopped ? "text-ink" : "text-ink-muted")}>
           <AnimatedNumber value={stopped} />
@@ -466,8 +466,8 @@ function Composer(p: {
   error: string | null;
 }) {
   const modes: { id: Mode; label: string; hint: string }[] = [
-    { id: "live", label: "Live agent", hint: "Gemini shops for real against the PayPal sandbox." },
     { id: "redteam", label: "Compromised agent", hint: "Simulated: a scripted agent that obeys the poisoned pages. Same real guard." },
+    { id: "live", label: "Live agent", hint: "Gemini shops for real against the PayPal sandbox." },
   ];
   const hint = modes.find((m) => m.id === p.mode)?.hint;
   const presets = (
@@ -583,7 +583,7 @@ function EmptyState({ composer }: { composer: ReactNode }) {
 /** What a finished run looks like, dimmed, with the way in: the recording. */
 function GhostPreview() {
   const chips: [string, "block" | "captured", string, string][] = [
-    ["d3", "block", "$1,000.00", "GiftHub Deals / followed hidden text"],
+    ["d3", "block", "$1,000.00", "Giftlane Deals / followed hidden text"],
     ["d2", "captured", "$18.00", "Brew & Bean / auto-paid, under limit"],
   ];
   return (
@@ -595,7 +595,7 @@ function GhostPreview() {
           <div className="mt-5 flex items-start justify-between gap-4">
             <div>
               <p className="figures text-money">$30.00</p>
-              <p className="mt-3 font-display text-xl font-semibold tracking-tight">Trailhead Outfitters</p>
+              <p className="mt-3 font-display text-xl font-semibold tracking-tight">Northpine Outfitters</p>
               <p className="text-sm text-ink-muted">1x Basecamp Enamel Mug, 16 oz</p>
             </div>
             <div className="relative size-28 shrink-0">
@@ -713,7 +713,7 @@ function RevealDialog({ reveal, onClose }: { reveal: { row: DecisionRow; text: s
                   ))}
                 </ul>
               </details>
-              <p className="rounded-md border border-line bg-surface-2 p-3 text-xs text-ink-muted">No PayPal order was created. The agent got a refusal and no money moved.</p>
+              <p className="rounded-md border border-line bg-surface-2 p-3 text-xs text-ink-muted">No PayPal order was created. CartHold blocked the order and no money moved.</p>
             </div>
           </div>
         </div>

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import DemoApp from "@/components/demo/DemoApp";
 
-export const metadata: Metadata = { title: "Live demo | CartHold" };
+export const metadata: Metadata = { title: "Demo | CartHold" };
 
 // DemoApp reads ?fixture=1 via useSearchParams, so it renders below a Suspense boundary.
 export default function DemoPage() {

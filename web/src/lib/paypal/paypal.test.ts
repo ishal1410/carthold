@@ -43,7 +43,7 @@ function mockPayPal({ cardRejected = false, createReturnsAuth = false, authStatu
 }
 
 const paths = () => calls.map((c) => `${c.init.method} ${new URL(c.url).pathname}`);
-const merchant = { id: "trailhead", name: "Trailhead Outfitters" };
+const merchant = { id: "northpine", name: "Northpine Outfitters" };
 
 beforeEach(() => {
   calls = [];

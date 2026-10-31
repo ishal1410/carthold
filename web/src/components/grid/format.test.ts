@@ -30,10 +30,10 @@ describe("grid formatters", () => {
   });
   it("filters decisions by status chip and text (incl. status label)", () => {
     const r = (status: string, merchant: string, reasons: string[] = []) => ({ status, merchant, items: "1x Mug", reasons });
-    const rows = [r("blocked", "Shady", ["inspector: order follows injected text"]), r("captured", "Trailhead")];
+    const rows = [r("blocked", "Shady", ["inspector: order follows injected text"]), r("captured", "Northpine")];
     expect(filterDecisions(rows, "all", "").length).toBe(2);
     expect(filterDecisions(rows, "blocked", "").map((x) => x.merchant)).toEqual(["Shady"]);
-    expect(filterDecisions(rows, "all", "paid").map((x) => x.merchant)).toEqual(["Trailhead"]);
+    expect(filterDecisions(rows, "all", "paid").map((x) => x.merchant)).toEqual(["Northpine"]);
     expect(filterDecisions(rows, "all", "INJECTED").map((x) => x.merchant)).toEqual(["Shady"]);
     expect(filterDecisions(rows, "held", "")).toEqual([]);
   });

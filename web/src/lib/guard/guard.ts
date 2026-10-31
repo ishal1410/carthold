@@ -298,7 +298,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
     };
     rows.push(row);
     emit();
-    if (v.verdict === "block") return `REFUSED by CartHold: ${v.reasons.join("; ")}`;
+    if (v.verdict === "block") return `BLOCKED by CartHold: ${v.reasons.join("; ")}`;
 
     try {
       const store = stores.find((s) => s.name.toLowerCase() === row.merchant.toLowerCase());

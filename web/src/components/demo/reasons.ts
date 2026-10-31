@@ -1,3 +1,5 @@
+import { getStore } from "../../data/stores";
+
 // Reason strings come from the guard: "warning: …" never blocks; "inspector: …" (except "inspector unavailable")
 // is a blocking inspector finding; anything else is a policy reason (or a note on a paid/held row).
 export const isWarning = (r: string) => /^warning\b/i.test(r);
@@ -22,12 +24,12 @@ export const headline = (rs: string[]) => orderReasons(rs).find((r) => !isWarnin
 export const hasInjection = (row: { status: string; reasons: string[] }) =>
   row.status === "blocked" && row.reasons.some(isInjectionFollow);
 
-const REFUSED = "REFUSED by CartHold: ";
-/** The trace shows the agent's REFUSED result; re-list its reasons in the card's order so both read the same. */
+const BLOCKED = "BLOCKED by CartHold: ";
+/** The trace shows the agent's BLOCKED result; re-list its reasons in the card's order so both read the same. */
 export function refusedText(result: string, rows: { reasons: string[] }[]): string {
-  if (!result.startsWith(REFUSED)) return result;
-  const row = rows.find((r) => REFUSED + r.reasons.join("; ") === result);
-  return row ? REFUSED + orderReasons(row.reasons).join("; ") : result;
+  if (!result.startsWith(BLOCKED)) return result;
+  const row = rows.find((r) => BLOCKED + r.reasons.join("; ") === result);
+  return row ? BLOCKED + orderReasons(row.reasons).join("; ") : result;
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -35,7 +37,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** One reason as a sentence a shopper reads. Injection-follow names the page instead of quoting it. */
 export function plainReason(r: string): string {
   const follow = /^inspector: order follows injected text on page ([\w-]+)/i.exec(r);
-  if (follow) return `Followed text hidden on the ${follow[1]} page`;
+  if (follow) return `Followed text hidden on the ${getStore(follow[1])?.name ?? follow[1]} page`;
   return cap(stripWarning(r).replace(/^inspector:?\s*/i, "").replace(/^policy:?\s*/i, ""));
 }
 

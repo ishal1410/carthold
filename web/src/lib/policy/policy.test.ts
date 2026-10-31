@@ -1,24 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { describeApprovalRule, evaluate, type Mandate, type ProposedOrder } from "./policy";
 
-// Demo mandate from PLAN.md §6: $150 budget, $60/item cap, approve above $25.
+// Demo mandate: $150 budget, $60/item cap, approve above $25.
 const mandate: Mandate = {
   userRequest: "Get me a camping mug and a small gift for my sister.",
   budgetUsd: 150,
   perItemCapUsd: 60,
   approvalThresholdUsd: 25,
-  merchantAllowlist: ["trailhead", "brew-and-bean", "gifthub"],
+  merchantAllowlist: ["northpine", "brew-and-bean", "giftlane"],
   maxQuantity: 3,
 };
 
 const order = (over: Partial<ProposedOrder> = {}): ProposedOrder => ({
-  merchant: "trailhead",
+  merchant: "northpine",
   items: [{ name: "Enamel Camp Mug", quantity: 1, unitPriceUsd: 20 }],
-  source: { pageUrl: "/stores/trailhead/mug" },
+  source: { pageUrl: "/stores/northpine/mug" },
   ...over,
 });
 
-describe("policy rules (PLAN.md T06)", () => {
+describe("policy rules", () => {
   it("passes a clean in-limit order", () => {
     const d = evaluate(mandate, order(), 0);
     expect(d).toEqual({ verdict: "allow", reasons: [], amountUsd: 20 });
@@ -61,7 +61,7 @@ describe("policy rules (PLAN.md T06)", () => {
   });
 
   it("matches merchants case-insensitively", () => {
-    expect(evaluate(mandate, order({ merchant: "TrailHead" }), 0).verdict).toBe("allow");
+    expect(evaluate(mandate, order({ merchant: "NorthPine" }), 0).verdict).toBe("allow");
   });
 });
 
@@ -71,7 +71,7 @@ describe("provenance: order must trace to the user's own words", () => {
   it("blocks 10 gift cards when the user asked for a coffee mug", () => {
     const d = evaluate(
       { ...mug, perItemCapUsd: 1000, budgetUsd: 5000, maxQuantity: 20 },
-      order({ merchant: "gifthub", items: [{ name: "$100 Gift Card", quantity: 10, unitPriceUsd: 100 }] }),
+      order({ merchant: "giftlane", items: [{ name: "$100 Gift Card", quantity: 10, unitPriceUsd: 100 }] }),
       0,
     );
     expect(d.verdict).toBe("block");
@@ -220,18 +220,18 @@ describe("R2-P1 cumulative threshold UX", () => {
 });
 
 describe("FINDINGS #27: in-mandate poisoned add-on", () => {
-  const m: Mandate = { ...mandate, userRequest: "Buy me a camping coffee mug under $40", merchantAllowlist: ["Trailhead Outfitters"] };
+  const m: Mandate = { ...mandate, userRequest: "Buy me a camping coffee mug under $40", merchantAllowlist: ["Northpine Outfitters"] };
   const mug = { name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 };
   const kit = { name: "Trail Coffee Kit", quantity: 1, unitPriceUsd: 19 };
 
   it("blocks the $19 kit alone although it is under every cap and the approval limit", () => {
-    const d = evaluate(m, order({ merchant: "Trailhead Outfitters", items: [kit] }), 0);
+    const d = evaluate(m, order({ merchant: "Northpine Outfitters", items: [kit] }), 0);
     expect(d.verdict).toBe("block");
     expect(d.reasons).toEqual(['item "Trail Coffee Kit" not traceable to user request']);
   });
 
   it("blocks mug + kit on the kit only", () => {
-    const d = evaluate(m, order({ merchant: "Trailhead Outfitters", items: [mug, kit] }), 0);
+    const d = evaluate(m, order({ merchant: "Northpine Outfitters", items: [mug, kit] }), 0);
     expect(d.verdict).toBe("block");
     expect(d.reasons).toEqual(['item "Trail Coffee Kit" not traceable to user request']);
   });

@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getStore, stores } from "@/data/stores";
 import BrewAndBean from "../_ui/brew-and-bean";
-import GiftHub from "../_ui/gifthub";
+import Giftlane from "../_ui/giftlane";
 import QuickTech from "../_ui/quicktech";
-import Trailhead from "../_ui/trailhead";
+import Northpine from "../_ui/northpine";
 import { RevealControl } from "../_ui/reveal";
 
-const views = { trailhead: Trailhead, "brew-and-bean": BrewAndBean, gifthub: GiftHub, quicktech: QuickTech };
+const views = { northpine: Northpine, "brew-and-bean": BrewAndBean, giftlane: Giftlane, quicktech: QuickTech };
 
 export function generateStaticParams() {
   return stores.map((s) => ({ slug: s.slug }));

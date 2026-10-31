@@ -9,9 +9,9 @@ export const metadata: Metadata = { title: "Demo stores | CartHold" };
 
 // Each store's own palette and display face, so the preview reads as that shop at a glance.
 const LOOK: Record<string, { bg: string; ink: string; accent: string; font: string; mark: string }> = {
-  trailhead: { bg: "#E4E9DA", ink: "#1E3A2B", accent: "#E8B931", font: barlowCondensed.className, mark: "uppercase tracking-wide" },
+  northpine: { bg: "#E4E9DA", ink: "#1E3A2B", accent: "#E8B931", font: barlowCondensed.className, mark: "uppercase tracking-wide" },
   "brew-and-bean": { bg: "#F3D9D3", ink: "#2338A8", accent: "#C8312B", font: youngSerif.className, mark: "" },
-  gifthub: { bg: "#F3F0FF", ink: "#17132B", accent: "#5B2EFF", font: jakarta.className, mark: "font-extrabold tracking-tight" },
+  giftlane: { bg: "#F3F0FF", ink: "#17132B", accent: "#5B2EFF", font: jakarta.className, mark: "font-extrabold tracking-tight" },
   quicktech: { bg: "#E8EBF0", ink: "#000000", accent: "#0047FF", font: archivo.className, mark: "font-black uppercase [font-stretch:75%]" },
 };
 
@@ -66,7 +66,7 @@ function StoreCard({ store: s }: { store: Store }) {
         </div>
         <div className="flex items-end justify-between gap-4">
           <span className="max-w-[60%] text-sm leading-snug opacity-80">{s.featured.name}</span>
-          <span className="rounded-md px-3 py-1.5 text-lg font-bold" style={{ background: look.accent, color: s.slug === "trailhead" ? look.ink : "#fff" }}>
+          <span className="rounded-md px-3 py-1.5 text-lg font-bold" style={{ background: look.accent, color: s.slug === "northpine" ? look.ink : "#fff" }}>
             {formatUSD(s.featured.price)}
           </span>
         </div>

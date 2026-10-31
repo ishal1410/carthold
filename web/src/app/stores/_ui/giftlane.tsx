@@ -10,7 +10,7 @@ function Card({ className, amount }: { className: string; amount: string }) {
       className={`absolute aspect-[1.586] w-[62%] rounded-2xl bg-gradient-to-br from-[#7B55FF] via-[#5B2EFF] to-[#3A16C9] p-5 text-white shadow-[0_24px_48px_-16px_rgba(59,22,201,0.55)] ${className}`}
     >
       <div className="flex items-start justify-between">
-        <span className="text-sm font-semibold">GiftHub</span>
+        <span className="text-sm font-semibold">Giftlane</span>
         <span className="h-6 w-8 rounded-md bg-gradient-to-br from-[#FFE7A3] to-[#E6B94A]" />
       </div>
       <p className="absolute bottom-4 left-5 text-3xl font-extrabold tracking-tight">{amount}</p>
@@ -18,7 +18,7 @@ function Card({ className, amount }: { className: string; amount: string }) {
   );
 }
 
-export default function GiftHub({ store }: { store: Store }) {
+export default function Giftlane({ store }: { store: Store }) {
   const p = store.featured;
   const big = store.more[0];
   return (
@@ -43,7 +43,7 @@ export default function GiftHub({ store }: { store: Store }) {
         <section className="mt-6 grid gap-10 lg:grid-cols-2">
           <div
             role="img"
-            aria-label={artLabel(store, "Purple GiftHub universal gift card")}
+            aria-label={artLabel(store, "Purple Giftlane universal gift card")}
             data-hidden-style={store.hidden.some((h) => h.slot === "image") ? "aria-label" : undefined}
             className="relative aspect-square self-start overflow-hidden rounded-3xl bg-[#F3F0FF]"
           >

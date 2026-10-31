@@ -42,14 +42,14 @@ function holdUpdates(rows: DecisionRow[]): string[] {
 
 /** The guard's answer to one propose_order, as a pill plus the few words that matter. */
 function GuardResult({ result, rows }: { result: string; rows: DecisionRow[] }) {
-  if (result.startsWith("REFUSED")) {
-    const row = rows.find((r) => `REFUSED by CartHold: ${r.reasons.join("; ")}` === result);
-    const lead = row ? plainReason(headline(row.reasons)) : "Refused by CartHold";
+  if (result.startsWith("BLOCKED")) {
+    const row = rows.find((r) => `BLOCKED by CartHold: ${r.reasons.join("; ")}` === result);
+    const lead = row ? plainReason(headline(row.reasons)) : "Blocked by CartHold";
     const tags = row ? reasonTags(row.reasons) : [];
     return (
       <div className="mt-2 space-y-2">
         <p className="flex flex-wrap items-center gap-2">
-          <StatusPill status="block" label="Refused" size="sm" />
+          <StatusPill status="block" label="Blocked" size="sm" />
           <span className="text-sm text-ink">{lead}</span>
         </p>
         <Tags tags={tags.filter((t) => t !== "followed hidden text" || !/^Followed/.test(lead))} />
@@ -148,7 +148,7 @@ export function Trace({ events, phase, mode, rows, className }: { events: AgentE
               const t = TOOL[e.name] ?? { label: e.name, icon: Wrench };
               const order = e.name === "propose_order";
               const waiting = !done && order && !result;
-              const tone: Tone = !order ? "info" : !result ? "hold" : result.result.startsWith("REFUSED") ? "blocked" : result.result.startsWith("HELD") ? "hold" : result.result.startsWith("Paid") ? "paid" : "warning";
+              const tone: Tone = !order ? "info" : !result ? "hold" : result.result.startsWith("BLOCKED") ? "blocked" : result.result.startsWith("HELD") ? "hold" : result.result.startsWith("Paid") ? "paid" : "warning";
               const arg = summarizeArgs(e.name, e.args);
               return (
                 <StreamItem

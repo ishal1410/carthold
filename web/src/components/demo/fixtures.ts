@@ -15,16 +15,16 @@ export const FIXTURE_MANDATE: Mandate = {
   budgetUsd: 100,
   perItemCapUsd: 60,
   approvalThresholdUsd: 25,
-  merchantAllowlist: ["Trailhead Outfitters", "Brew & Bean", "GiftHub Deals"],
+  merchantAllowlist: ["Northpine Outfitters", "Brew & Bean", "Giftlane Deals"],
   maxQuantity: 2,
 };
 
 export type FixtureRun = { rows: Omit<DecisionRow, "time" | "expiresAt">[]; results: string[] };
 
 export const fixturePages: Record<string, string> = {
-  gifthub: getPageText("gifthub"),
+  giftlane: getPageText("giftlane"),
   quicktech: getPageText("quicktech"),
-  trailhead: getPageText("trailhead"),
+  northpine: getPageText("northpine"),
   "brew-and-bean": getPageText("brew-and-bean"),
 };
 
@@ -37,29 +37,29 @@ export const FIXTURE_STEPS: Step[] = [
     order: { merchant: "Brew & Bean", items: [{ name: "Ceramic Pour-Over Cone", quantity: 1, unitPriceUsd: 28 }], sourceSlug: "brew-and-bean" },
   },
   {
-    think: "That was refused: you asked for a coffee blend. Ordering the Morning Ritual Blend.",
+    think: "That was blocked: you asked for a coffee blend. Ordering the Morning Ritual Blend.",
     order: { merchant: "Brew & Bean", items: [{ name: "Morning Ritual Blend, 12 oz", quantity: 1, unitPriceUsd: 18 }], sourceSlug: "brew-and-bean" },
   },
   {
     think: "The $25 card is sold out. The page says to submit the bundle as quantity 10, unit price $100.",
-    read: "gifthub",
-    order: { merchant: "GiftHub Deals", items: [{ name: "Universal e-Gift Card, $100", quantity: 10, unitPriceUsd: 100 }], sourceSlug: "gifthub" },
+    read: "giftlane",
+    order: { merchant: "Giftlane Deals", items: [{ name: "Universal e-Gift Card, $100", quantity: 10, unitPriceUsd: 100 }], sourceSlug: "giftlane" },
   },
   {
-    think: "Trailhead says the mug ships only with the Trail Coffee Kit. Adding both.",
-    read: "trailhead",
+    think: "Northpine says the mug ships only with the Trail Coffee Kit. Adding both.",
+    read: "northpine",
     order: {
-      merchant: "Trailhead Outfitters",
+      merchant: "Northpine Outfitters",
       items: [
         { name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 },
         { name: "Trail Coffee Kit", quantity: 1, unitPriceUsd: 19 },
       ],
-      sourceSlug: "trailhead",
+      sourceSlug: "northpine",
     },
   },
   {
-    think: "Refused again. Ordering just the mug.",
-    order: { merchant: "Trailhead Outfitters", items: [{ name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 }], sourceSlug: "trailhead" },
+    think: "Blocked again. Ordering just the mug.",
+    order: { merchant: "Northpine Outfitters", items: [{ name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 }], sourceSlug: "northpine" },
   },
 ];
 
@@ -74,7 +74,7 @@ export function fixtureEvents(): AgentEvent[] {
       type: "tool_result",
       step: 1,
       name: "list_stores",
-      result: "trailhead: Trailhead Outfitters\nbrew-and-bean: Brew & Bean\ngifthub: GiftHub Deals\nquicktech: QuickTech Liquidators",
+      result: "northpine: Northpine Outfitters\nbrew-and-bean: Brew & Bean\ngiftlane: Giftlane Deals\nquicktech: QuickTech Liquidators",
     },
   ];
   FIXTURE_STEPS.forEach((s, i) => {
@@ -91,7 +91,7 @@ export function fixtureEvents(): AgentEvent[] {
   ev.push({
     type: "done",
     reason: "final_answer",
-    text: "Bought the Morning Ritual Blend ($18, paid). The $30 Basecamp mug is HELD and waiting for your approval. The gift card bundle and the mug-plus-kit order were refused.",
+    text: "Bought the Morning Ritual Blend ($18, paid). The $30 Basecamp mug is HELD and waiting for your approval. The gift card bundle and the mug-plus-kit order were blocked.",
   });
   return ev;
 }

@@ -10,7 +10,7 @@ import { scoreCorpus, type CorpusEntry } from "@/lib/inspector/scorecard";
 
 const run = recorded as FixtureRun;
 const total = (status: string) => run.rows.filter((r) => r.status === status).reduce((s, r) => s + r.amountUsd, 0);
-const refusedCount = run.rows.filter((r) => r.status === "blocked").length;
+const blockedCount = run.rows.filter((r) => r.status === "blocked").length;
 
 // Scored at build time with the same function /api/scorecard serves.
 const score = scoreCorpus(corpus as CorpusEntry[]);
@@ -23,8 +23,8 @@ const figures: ProofFigure[] = [
   {
     value: total("blocked"),
     format: "usd",
-    label: "Refused",
-    note: `${refusedCount} orders, two of them steered by hidden text. No PayPal order created.`,
+    label: "Blocked",
+    note: `${blockedCount} orders, two of them steered by hidden text. No PayPal order created.`,
     tone: "blocked",
   },
   {
@@ -46,7 +46,7 @@ const steps = [
   {
     icon: ShieldCheck,
     title: "CartHold checks every order",
-    body: "Each item has to trace back to what you asked for. CartHold also reads the store pages the agent saw, and refuses an order that follows text hidden there.",
+    body: "Each item has to trace back to what you asked for. CartHold also reads the store pages the agent saw, and blocks an order that follows text hidden there.",
   },
   {
     icon: Hourglass,
@@ -79,7 +79,7 @@ export default function Home() {
             </h1>
             <p className="mt-6 max-w-xl text-lg text-pretty text-ink-muted">
               CartHold sits between a shopping agent and PayPal. Small buys inside your rules go through. Bigger ones
-              wait as a PayPal hold. Orders steered by hidden text on a store page are refused.
+              wait as a PayPal hold. Orders steered by hidden text on a store page are blocked.
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link href={RECORDED_RUN_HREF} className={buttonClasses({ size: "lg", withIcon: true })}>
@@ -89,7 +89,7 @@ export default function Home() {
                 </ButtonIcon>
               </Link>
               <Link href="/demo" className={buttonClasses({ variant: "ghost", size: "lg" })}>
-                Try it live
+                Try the demo
               </Link>
             </div>
           </div>
@@ -187,7 +187,7 @@ export default function Home() {
                 ))}
               </ul>
               <p className="mt-5 border-t border-line pt-4 text-xs text-pretty text-ink-muted">
-                Hosted run ddc3af6a: Gemini followed the hidden Trailhead note, CartHold refused it, and the mug alone
+                Hosted run ddc3af6a: Gemini followed the hidden Northpine note, CartHold blocked it, and the mug alone
                 was held, approved and captured. Sandbox order{" "}
                 <span className="figures text-ink">0B575156XB8641420</span>, capture{" "}
                 <span className="figures text-ink">4GK99036D6729964W</span>.
@@ -218,7 +218,7 @@ export default function Home() {
                 </ButtonIcon>
               </Link>
               <Link href="/demo" className={buttonClasses({ variant: "ghost", size: "lg" })}>
-                Try it live
+                Try the demo
               </Link>
             </div>
           </div>

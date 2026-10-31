@@ -63,8 +63,8 @@ Real PayPal sandbox ids from verified runs:
 | Round-1 QA run in the browser: Reject | authorization `6KP64629H7699140C` voided |
 | Round-2 QA run in the browser: Approve | order `1E943314CU814705W`, capture `01K348840S099210H` |
 | Round-2 QA run in the browser: Reject | authorization `9PV35600E0696470Y` voided |
-| Round-3 live run `091f3156`: Gemini followed the Trailhead note, was refused, retried with the mug alone, held, approved | order `05S854780E163201L`, authorization `5CP66355XD594173N`, capture `9CB73521V0143864G` |
+| Round-3 live run `091f3156`: Gemini followed the Northpine note, was refused, retried with the mug alone, held, approved | order `05S854780E163201L`, authorization `5CP66355XD594173N`, capture `9CB73521V0143864G` |
 
 The card `payment_source` worked on the default sandbox business account, so no buyer redirect is needed.
 
-What happened in each run, with sources: [docs/evidence/2026-10-29-live-runs.md](docs/evidence/2026-10-29-live-runs.md).
+What happened in each run, with sources: [docs/evidence/2026-10-29-live-runs.md](../evidence/2026-10-29-live-runs.md).

@@ -46,9 +46,9 @@ order 0WW91005W72065834 capture 12543692F1954200M, reject→void auth 6KP64629H7
 30. Not public; UI/API uncommitted (DD-2). Commit + public GitHub + license in About.
 31. README mostly TODO; no hosted URL; no run/creds instructions (DD-7).
 32. Name "AgentGuard" collides with 7+ projects (DD-10). Rename before public.
-33. Scorecard is regex-only on own corpus; GiftHub real lure not in "demo page" row (DD-9, QA-9). Label honestly; add LLM column.
+33. Scorecard is regex-only on own corpus; Giftlane real lure not in "demo page" row (DD-9, QA-9). Label honestly; add LLM column.
 34. AG Grid usage basic (DD-15): add column filters, cell flash, status row classes, CSV export.
-35. Regex backstop page-level, blocks legit GiftHub buys (DD-13).
+35. Regex backstop page-level, blocks legit Giftlane buys (DD-13).
 36. BRIEF misquotes rules (DD-12). Video must be public YouTube (DD-8).
 
 ## Low

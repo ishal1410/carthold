@@ -1,5 +1,7 @@
 // One Gemini REST call with a 20s timeout and a single retry on 429/5xx.
 // Errors carry only the status; upstream bodies are logged server-side, never returned (FINDINGS #12, #24).
+/** The one Gemini model every call uses (agent + inspector). Pinned, not the -latest alias: Google hot-swaps aliases on new releases (ai.google.dev/gemini-api/docs/models). */
+export const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 const TIMEOUT_MS = 20_000;
 

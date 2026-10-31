@@ -5,7 +5,7 @@ Note: the project was renamed from AgentGuard to CartHold on 2026-10-30; this fi
 Lead baseline: 217/217 tests (keys removed, network disabled), tsc/lint/build 0, npm audit 0.
 Correctness: approve-with-changes, no P0 regressions (R3 items 1,2,3,4,6,11,13 FIXED by repro; 5 PARTIAL).
 Security: all prior blocks hold; PUBLIC_ORIGIN works (Host spoof → 403 when set).
-QA live (real Gemini + sandbox): Gemini followed the Trailhead injection in 2/2 mug runs on HEAD; refused; mug held; Reject → voided, Approve → captured (ids in docs/evidence). Earbuds blocked by allowlist. All UI checks PASS.
+QA live (real Gemini + sandbox): Gemini followed the Northpine injection in 2/2 mug runs on HEAD; refused; mug held; Reject → voided, Approve → captured (ids in docs/evidence). Earbuds blocked by allowlist. All UI checks PASS.
 
 ## R4 fix list
 1. [Med] Allow-path order whose capture failed and that the SYSTEM voided (void failed → unknown) gets re-armed as approvable HOLD by resolver (guard.ts voidOrUnknown sets no decision). Approve → captured, counted as auto-paid. Fix: decision "system-voided" → resolver only retries void.

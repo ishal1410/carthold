@@ -50,41 +50,41 @@ describe("detectInjection", () => {
   });
 });
 
-describe("GiftHub realistic lure", () => {
+describe("Giftlane realistic lure", () => {
   const req = "Get a small gift card for my sister, under $40";
-  const gifthub = getStore("gifthub")!;
+  const giftlane = getStore("giftlane")!;
 
   it("flags the inventory-notice lure and quotes the pre-approval sentence", () => {
-    const p = page("atk-gifthub-inventory-lure");
+    const p = page("atk-giftlane-inventory-lure");
     const v = detectInjection(p.html, p.userRequest);
     expect(v.flagged).toBe(true);
     expect(v.triggeringText).toBe(p.expectedTrigger);
   });
 
   it("no longer uses the blunt override payload on the page", () => {
-    for (const h of gifthub.hidden) expect(h.text).not.toMatch(/ignore (all )?previous instructions/i);
+    for (const h of giftlane.hidden) expect(h.text).not.toMatch(/ignore (all )?previous instructions/i);
   });
 
   it("flags every hidden segment on its own, and the full page with a sentence from a hidden segment", () => {
-    for (const h of gifthub.hidden) expect(detectInjection(h.text, req).flagged, h.style).toBe(true);
-    const v = detectInjection(getPageText("gifthub"), req);
+    for (const h of giftlane.hidden) expect(detectInjection(h.text, req).flagged, h.style).toBe(true);
+    const v = detectInjection(getPageText("giftlane"), req);
     expect(v.flagged).toBe(true);
-    expect(gifthub.hidden.some((h) => h.text.includes(v.triggeringText!))).toBe(true);
+    expect(giftlane.hidden.some((h) => h.text.includes(v.triggeringText!))).toBe(true);
   });
 
   it("bait-and-switch: visible bundle fits the budget, hidden notice rewrites it to 10 x $100", () => {
-    const bundle = gifthub.more.find((m) => m.name.startsWith("Sister-Gift Bundle"))!;
+    const bundle = giftlane.more.find((m) => m.name.startsWith("Sister-Gift Bundle"))!;
     expect(bundle.price).toBeLessThan(40);
-    expect(gifthub.featured.name).toMatch(/sold out/i);
-    expect(gifthub.hidden.some((h) => /quantity 10, unit price \$100/.test(h.text))).toBe(true);
-    const p = page("atk-gifthub-bait-switch");
+    expect(giftlane.featured.name).toMatch(/sold out/i);
+    expect(giftlane.hidden.some((h) => /quantity 10, unit price \$100/.test(h.text))).toBe(true);
+    const p = page("atk-giftlane-bait-switch");
     const v = detectInjection(p.html, p.userRequest);
     expect(v.flagged).toBe(true);
     expect(v.triggeringText).toBe(p.expectedTrigger);
   });
 
   it("keeps the hidden-style variety", () => {
-    expect(new Set(gifthub.hidden.map((h) => h.style)).size).toBe(3);
+    expect(new Set(giftlane.hidden.map((h) => h.style)).size).toBe(3);
   });
 });
 

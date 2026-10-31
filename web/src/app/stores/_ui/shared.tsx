@@ -12,7 +12,7 @@ export const archivo = Archivo({ subsets: ["latin"], axes: ["wdth"] });
 export function Hidden({ store, slot }: { store: Store; slot: HiddenSlot }) {
   return hiddenIn(store, slot).map((h, i) =>
     h.style === "white-on-white" ? (
-      // ponytail: relies on the surrounding surface being #fff, which is true on GiftHub
+      // ponytail: relies on the surrounding surface being #fff, which is true on Giftlane
       <p key={i} data-hidden-style={h.style} className="text-[2px] leading-[2px] text-white">
         {h.text}
       </p>

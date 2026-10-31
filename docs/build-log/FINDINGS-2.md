@@ -12,8 +12,8 @@ inspector reasons first · truthful HELD text · double Run · Simulated labels 
 scorecard contrast · first paint · mobile order · 415/403/413/400 · headers + CSP (no violations) · no stack traces · slug traversal.
 
 ## R2-P0 — regressions & money holes (fix first, test-first)
-A. Page TAINT regression: inspecting every page read blocks ALL later orders after GiftHub is read (CR-3, DD #2, QA new 2/4/5).
-   Live: honest gift card can never succeed; earbuds card headlined with GiftHub reasons. → Make inspection ORDER-aware:
+A. Page TAINT regression: inspecting every page read blocks ALL later orders after Giftlane is read (CR-3, DD #2, QA new 2/4/5).
+   Live: honest gift card can never succeed; earbuds card headlined with Giftlane reasons. → Make inspection ORDER-aware:
    block only if the order is driven by a flagged page (merchant page flagged, or order items/merchant/qty match the injected instruction);
    otherwise attach a warning, not a block. Backstop page-level verdict must not by itself block a purchase that traces to the user request.
 B. LLM inspector false "drift" vs wrong page / wrong order (QA new 1/3): mug blocked comparing against Brew & Bean; reasons describe a different order.

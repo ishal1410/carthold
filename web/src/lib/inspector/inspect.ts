@@ -1,7 +1,7 @@
 // LLM inspector. Its ONLY blocking role: a verbatim quote of injected text (a regex-flagged or hidden segment of
 // the page) that the guard then checks the order actually follows. Drift from the user request is judged by the
 // deterministic policy alone; an LLM "mismatch" channel was removed in R4 because it could never change a verdict.
-import { postGemini } from "../agent/gemini";
+import { GEMINI_MODEL, postGemini } from "../agent/gemini";
 import { detectInjection, extractText, flaggedLines, type Verdict } from "./backstop";
 
 export type Llm = (prompt: string) => Promise<string>;
@@ -17,7 +17,7 @@ const SCHEMA = {
 };
 
 export const gemini: Llm = async (prompt) => {
-  const data = await postGemini("gemini-flash-lite-latest:generateContent", {
+  const data = await postGemini(`${GEMINI_MODEL}:generateContent`, {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: SCHEMA },
   });

@@ -35,7 +35,7 @@ function buildEvents(): Ev[] {
 }
 
 const statusOf: Record<string, Status> = { blocked: "block", captured: "captured", held: "hold", voided: "voided" };
-const verdictWord: Record<string, string> = { blocked: "Refused", captured: "Paid", held: "Held for you" };
+const verdictWord: Record<string, string> = { blocked: "Blocked", captured: "Paid", held: "Held for you" };
 
 function headline(row: Row): string {
   const inspector = row.reasons.find((r) => r.startsWith("inspector:"));
@@ -108,7 +108,7 @@ export function RecordedReplay() {
               {[
                 { label: "Paid", value: sum("captured"), cls: "text-paid" },
                 { label: "Held", value: sum("held"), cls: "text-hold" },
-                { label: "Refused", value: sum("blocked"), cls: "text-blocked" },
+                { label: "Blocked", value: sum("blocked"), cls: "text-blocked" },
               ].map((t, i) => (
                 <div key={t.label} className={cx(i > 0 && "border-l border-line pl-4")}>
                   <dt className="text-xs text-ink-muted">{t.label}</dt>

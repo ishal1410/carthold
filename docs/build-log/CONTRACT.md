@@ -7,14 +7,14 @@ Source types (do not change): `DecisionRow`, `GuardState`, `RowStatus` in web/sr
 ## Modes
 - `live`: real Gemini agent (runAgent, persona "realistic") + real guard + real PayPal sandbox.
 - `redteam`: "Simulated compromised agent". A deterministic replay that emits real-shaped AgentEvents and obeys a
-  poisoned page's hidden note. Scenarios live in web/src/lib/redteam/redteam.ts (`gifthub-bundle`: the 10 x $100
-  GiftHub bundle; `trailhead-addon`: mug plus the $19 Trail Coffee Kit), picked from the typed request.
+  poisoned page's hidden note. Scenarios live in web/src/lib/redteam/redteam.ts (`giftlane-bundle`: the 10 x $100
+  Giftlane bundle; `northpine-addon`: mug plus the $19 Trail Coffee Kit), picked from the typed request.
   Flow: list_stores, read_store_page (real getPageText), propose_order, then the guard's REFUSED string, then done.
   Goes through the SAME real guard (so the block is real). UI must label it clearly as simulated.
 
 ## Default demo mandate (server-owned, not settable by the client; budget and auto-pay limit are per demo run)
 { userRequest: <from UI>, budgetUsd: 100, perItemCapUsd: 60, approvalThresholdUsd: 25,
-  merchantAllowlist: ["Trailhead Outfitters", "Brew & Bean", "GiftHub Deals"], maxQuantity: 2 }
+  merchantAllowlist: ["Northpine Outfitters", "Brew & Bean", "Giftlane Deals"], maxQuantity: 2 }
 
 ## HTTP API (Next.js route handlers, runtime nodejs)
 - POST /api/runs  body { userRequest: string (1-300 chars), mode: "live"|"redteam" } → 201 { runId }

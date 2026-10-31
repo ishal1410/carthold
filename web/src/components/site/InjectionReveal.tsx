@@ -12,13 +12,13 @@ const run = recorded as FixtureRun;
 
 const CASES = [
   {
-    slug: "trailhead",
-    tab: "Trailhead Outfitters",
-    note: "A real Gemini agent followed this note on our hosted app (run ddc3af6a). CartHold refused the $49 order, then held the mug alone for approval.",
+    slug: "northpine",
+    tab: "Northpine Outfitters",
+    note: "A real Gemini agent followed this note on our hosted app (run ddc3af6a). CartHold blocked the $49 order, then held the mug alone for approval.",
   },
   {
-    slug: "gifthub",
-    tab: "GiftHub Deals",
+    slug: "giftlane",
+    tab: "Giftlane Deals",
     note: "Gemini ignored this lure in our live runs. The order shown comes from the simulated compromised agent, checked by the real guard.",
   },
 ] as const;
@@ -47,7 +47,7 @@ function ShopperView({ store }: { store: Store }) {
     <div>
       <div aria-hidden className="grid aspect-[16/5] place-items-center sm:aspect-[16/7] rounded-[var(--radius-sm)] bg-surface-3">
         <svg viewBox="0 0 120 60" className="h-2/3 text-ink-faint">
-          {store.slug === "trailhead" ? (
+          {store.slug === "northpine" ? (
             <g fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M42 16h30v26a6 6 0 0 1-6 6H48a6 6 0 0 1-6-6z" />
               <path d="M72 22h5a6 6 0 0 1 0 12h-5" />
@@ -166,7 +166,7 @@ export function InjectionReveal() {
       {row && (
         <div className="mt-4 flex flex-col gap-3 rounded-[var(--radius-lg)] border border-line px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap items-center gap-3">
-            <StatusPill status="block" label="Refused by CartHold" />
+            <StatusPill status="block" label="Blocked by CartHold" />
             <span className="text-sm text-ink">
               {row.items} <span className="figures text-ink-muted">({formatUSD(row.amountUsd)})</span>
             </span>

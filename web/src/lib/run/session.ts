@@ -14,7 +14,7 @@ export const DEFAULT_MANDATE: Omit<Mandate, "userRequest"> = {
   budgetUsd: 100,
   perItemCapUsd: 60,
   approvalThresholdUsd: 25,
-  merchantAllowlist: ["Trailhead Outfitters", "Brew & Bean", "GiftHub Deals"],
+  merchantAllowlist: ["Northpine Outfitters", "Brew & Bean", "Giftlane Deals"],
   maxQuantity: 2,
 };
 

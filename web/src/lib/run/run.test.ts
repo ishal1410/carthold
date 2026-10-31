@@ -259,9 +259,9 @@ describe("read-only routes", () => {
   });
 
   it("GET /api/stores/:slug/text returns page text, 404 for unknown", async () => {
-    const res = await storeTextRoute(new Request("http://x"), params({ slug: "gifthub" }));
+    const res = await storeTextRoute(new Request("http://x"), params({ slug: "giftlane" }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ slug: "gifthub", merchant: "GiftHub Deals", text: expect.any(String) });
+    expect(await res.json()).toMatchObject({ slug: "giftlane", merchant: "Giftlane Deals", text: expect.any(String) });
     expect((await storeTextRoute(new Request("http://x"), params({ slug: "nope" }))).status).toBe(404);
   });
 });

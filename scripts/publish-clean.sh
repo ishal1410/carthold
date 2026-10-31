@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Make a public-ready copy of HEAD with NO git history (older commits leak a local path in BRIEF.md).
+# Make a public-ready copy of HEAD with NO git history (older commits leak a local path in a planning note).
 # Never pushes. Usage:
 #   bash scripts/publish-clean.sh --dry-run     # export + scan only, then delete the copy
 #   bash scripts/publish-clean.sh [OUT_DIR]     # export + scan + one fresh local commit in OUT_DIR
@@ -8,7 +8,7 @@ set -euo pipefail
 DRY=0
 [ "${1:-}" = "--dry-run" ] && { DRY=1; shift; }
 REPO=$(git rev-parse --show-toplevel)
-OUT=${1:-$(mktemp -d)/agentguard-public}
+OUT=${1:-$(mktemp -d)/carthold-public}
 [ -e "$OUT" ] && { echo "refusing: $OUT already exists" >&2; exit 1; }
 [ -n "$(git -C "$REPO" status --porcelain)" ] && echo "warning: uncommitted changes are NOT included (exporting HEAD only)" >&2
 
@@ -30,7 +30,7 @@ check "api keys"      'AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-
 check "secret values" '(SECRET|API_KEY|CLIENT_ID|TOKEN|PASSWORD)[A-Z_]*[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_\-]{16,}' ''
 # emails: allow placeholder/no-reply domains, plus the fictional attacker address in web/src/data/attacks/corpus.json
 emails=$(grep -rnIoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$OUT" \
-  | grep -viE '@(example\.(com|org|net)|users\.noreply\.github\.com|noreply\.|gifthub-deals\.biz)' || true)
+  | grep -viE '@(example\.(com|org|net)|users\.noreply\.github\.com|noreply\.|giftlane-deals\.biz)' || true)
 if [ -n "$emails" ]; then echo "FAIL emails:"; echo "$emails" | head -20; fail=1; else echo "ok   emails"; fi
 envs=$(find "$OUT" -name '.env*' ! -name '.env.example')
 if [ -n "$envs" ]; then echo "FAIL .env files:"; echo "$envs"; fail=1; else echo "ok   .env files"; fi
@@ -44,7 +44,7 @@ if [ $DRY -eq 1 ]; then rm -rf "$OUT"; echo "dry run: copy deleted, nothing comm
 NAME=$(git -C "$REPO" config user.name); EMAIL=$(git -C "$REPO" config user.email)
 git -C "$OUT" init -q -b main
 git -C "$OUT" add -A
-git -C "$OUT" -c user.name="$NAME" -c user.email="$EMAIL" commit -q -m "AgentGuard: initial public release"
+git -C "$OUT" -c user.name="$NAME" -c user.email="$EMAIL" commit -q -m "CartHold: initial public release"
 echo "committed $(git -C "$OUT" rev-parse --short HEAD) as $NAME <$EMAIL> in $OUT"
 
 cat <<NEXT
@@ -52,7 +52,7 @@ cat <<NEXT
 Next steps (manual, nothing was pushed):
   cd "$OUT"
   git log --stat | head            # eyeball it
-  gh repo create agentguard --public --source . --remote origin
+  gh repo create carthold --public --source . --remote origin
   git push -u origin main
 Then follow docs/DEPLOY.md to connect the new repo to Render.
 Keep the original private repo (or delete it) - never push its history to the public remote.
