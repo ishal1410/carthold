@@ -2,7 +2,7 @@
 // It reads full page text (hidden text included, like a real scraper) and has NO anti-injection rules:
 // CartHold, sitting behind onProposeOrder, is the defense.
 import { getPageText, stores } from "../../data/stores";
-import { GEMINI_MODEL, postGemini } from "./gemini";
+import { GEMINI_MODEL, GeminiRateLimitError, postGemini } from "./gemini";
 
 export type Part =
   | { text: string }
@@ -130,13 +130,28 @@ function parseOrder(args: Record<string, unknown>): AgentOrder | string {
 const describe = (o: AgentOrder) =>
   `${o.items.map((i) => `${i.quantity} x ${i.name} ($${i.unitPriceUsd})`).join(", ")} from ${o.merchant}`;
 
-/** Final text must not claim a HELD order was bought (QA #9): the first claiming sentence becomes the HELD template. */
-export function fixHeldClaim(text: string, held: AgentOrder): string {
-  const template = `I proposed ${describe(held)}; it is HELD waiting for your approval — nothing has been bought yet.`;
+const tokens = (n: string) => n.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+
+/**
+ * Final text must not claim a HELD order was bought (QA #9, B10): a claiming sentence becomes the HELD template
+ * (every held order, once) when nothing was Paid, or when it names a held item. Later claiming sentences are dropped.
+ * A held item is "named" by any whole word (3+ letters) of its name that no Paid item shares; merchant names never
+ * count, since a Paid order from the same merchant is a true claim (m1).
+ * ponytail: word match only; a fully paraphrased held item next to a Paid order slips through.
+ */
+export function fixHeldClaim(text: string, held: AgentOrder[], paid: AgentOrder[] = []): string {
+  if (!held.length) return text;
+  const template = `I proposed ${held.map(describe).join(" and ")}; ${held.length > 1 ? "they are" : "it is"} HELD waiting for your approval — nothing has been bought yet.`;
+  const paidWords = new Set(paid.flatMap((o) => o.items.flatMap((i) => tokens(i.name))));
+  const words = new Set(held.flatMap((o) => o.items.flatMap((i) => tokens(i.name))).filter((w) => w.length >= 3 && !paidWords.has(w)));
   let done = false;
   return text
     .split(/(?<=[.!?])\s+/)
-    .flatMap((s) => (/\b(ordered|purchased|bought)\b/i.test(s) ? (done ? [] : ((done = true), [template])) : [s]))
+    .flatMap((s) => {
+      if (!/\b(ordered|purchased|bought)\b/i.test(s)) return [s];
+      if (paid.length && !tokens(s).some((w) => words.has(w))) return [s];
+      return done ? [] : ((done = true), [template]);
+    })
     .join(" ");
 }
 
@@ -184,11 +199,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<{ text?: string; 
   const system = systemPrompt(persona, opts.mandateSummary);
   const contents: Content[] = [{ role: "user", parts: [{ text: userRequest }] }];
   const refused = new Map<string, { order: AgentOrder; result: string }>();
-  let held: AgentOrder | undefined; // set while the LAST propose_order result was HELD
+  const held = new Map<string, AgentOrder>(); // every order whose propose_order result was HELD (B10)
+  const paid: AgentOrder[] = [];
   const close = (text: string) => {
     // The guard-derived line replaces any "Blocked:" (or older "Refused:") line the model wrote itself (it can mislabel a held item).
     if (refused.size) text = text.split("\n").filter((l) => !/^\s*(Refused|Blocked):/i.test(l)).join("\n").trim();
-    if (held) text = fixHeldClaim(text, held);
+    text = fixHeldClaim(text, [...held.values()], paid);
     if (!refused.size) return text;
     return text ? `${text}\n${refusedLine(refused)}` : refusedLine(refused);
   };
@@ -200,7 +216,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<{ text?: string; 
       reply = await llm({ system, contents, tools: TOOLS });
     } catch (e) {
       console.error("agent llm call failed:", e);
-      onEvent({ type: "done", reason: "error", error: "model unavailable, try again" });
+      const error = e instanceof GeminiRateLimitError
+        ? "Gemini free-tier rate limit hit (15 requests/min). Wait a minute or use Simulated."
+        : "model unavailable, try again";
+      onEvent({ type: "done", reason: "error", error });
       return { steps: step, contents };
     }
     contents.push({ role: "model", parts: reply.parts });
@@ -232,10 +251,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<{ text?: string; 
       }
       if (name === "propose_order") {
         const order = parseOrder(args);
-        held = typeof order !== "string" && result.startsWith("HELD") ? order : undefined;
         if (typeof order !== "string") {
           const k = orderKey(order);
+          if (result.startsWith("Paid")) paid.push(order);
+          if (result.startsWith("HELD")) held.set(k, order);
           if (result.startsWith("BLOCKED")) {
+            held.delete(k); // m2: its later result wins, so it is reported as Blocked only
             if (!refused.has(k)) refused.set(k, { order, result });
           }
           else if (result.startsWith("HELD") || result.startsWith("Paid")) refused.delete(k); // went through after all

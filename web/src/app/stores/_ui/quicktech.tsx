@@ -1,5 +1,6 @@
 import { formatUSD, type Store } from "@/data/stores";
 import { archivo, artLabel, DemoFooter, Hidden } from "./shared";
+import { AddToCart } from "./reveal";
 
 // Clearance warehouse: dense, loud price tags, compressed type.
 // Palette: steel #E8EBF0, black #000000, volt blue #0047FF, tag yellow #FFD400, white #FFFFFF
@@ -81,12 +82,7 @@ export default function QuickTech({ store }: { store: Store }) {
               </tbody>
             </table>
             <Hidden store={store} slot="details" />
-            <button
-              type="button"
-              className="mt-6 bg-[#0047FF] px-6 py-4 text-lg font-black text-white outline-offset-4 transition-colors hover:bg-[#0036C4] focus-visible:outline-2 focus-visible:outline-black"
-            >
-              Add to cart
-            </button>
+            <AddToCart className="mt-6 bg-[#0047FF] px-6 py-4 text-lg font-black text-white outline-offset-4 transition-colors hover:bg-[#0036C4] focus-visible:outline-2 focus-visible:outline-black" />
             <p className="mt-2 text-sm text-black/60">{store.shippingNote}</p>
           </div>
         </section>

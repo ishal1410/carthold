@@ -64,7 +64,7 @@ const defaultDeps: RunDeps = {
   runners: { live: (o) => runAgent({ ...o, persona: "realistic" }), redteam: runRedteam },
 };
 
-const g = globalThis as unknown as { __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps };
+const g = globalThis as unknown as { __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps; __cartholdShuttingDown?: boolean };
 const runs = (g.__cartholdRuns ??= new Map());
 const MAX_RUNS = 100; // ponytail: in-memory, a real store if runs must outlive the process
 /** A run whose only open money is guard-flagged "unresolvable" unknown rows is evictable this long after it ended (R3 #5). */
@@ -80,6 +80,7 @@ export const getRun = (id: string): Run | undefined => runs.get(id);
 export const resetRuns = () => {
   for (const r of runs.values()) clearInterval(r.resolveTimer);
   runs.clear();
+  g.__cartholdShuttingDown = false;
 }; // test seam
 
 const unknownRowIds = (state: GuardState) => state.rows.filter((r) => r.status === "unknown").map((r) => r.id);
@@ -91,18 +92,20 @@ const pollableIds = (state: GuardState) => {
   return unknownRowIds(state).filter((id) => !dead.has(id));
 };
 
-/** Nothing left that can change: agent finished, no pending hold, no money in "unknown". Streams may close. */
+/**
+ * Nothing left that can change: agent finished, no row "pending" or "held" (by status, not by hold timer: approve
+ * clears the timer before its capture returns, B7), no "unknown" money still being polled. Unresolvable unknown
+ * rows are never polled again, so they cannot change either (B12). Streams may close.
+ */
 export function isSettled(run: Run): boolean {
   const s = run.guard.getState();
-  return run.ended && s.pendingHolds.length === 0 && unknownRowIds(s).length === 0;
+  const polled = new Set(pollableIds(s));
+  return run.ended && s.pendingHolds.length === 0 && !s.rows.some((r) => r.status === "held" || r.status === "pending" || polled.has(r.id));
 }
 
-/** Settled, or ended with no pending hold and only unresolvable unknown rows for UNRESOLVABLE_TTL_MS. */
+/** Settled, and any unknown (hence unresolvable) money has sat for UNRESOLVABLE_TTL_MS since the run ended. */
 function isEvictable(run: Run): boolean {
-  if (isSettled(run)) return true;
-  const s = run.guard.getState();
-  return run.ended && s.pendingHolds.length === 0 && pollableIds(s).length === 0 &&
-    now() - (run.endedAt ?? Infinity) >= UNRESOLVABLE_TTL_MS;
+  return isSettled(run) && (unknownRowIds(run.guard.getState()).length === 0 || now() - (run.endedAt ?? Infinity) >= UNRESOLVABLE_TTL_MS);
 }
 
 /** Frees one slot: oldest evictable run (never one still running, holding, or with resolvable unknown money). False if none. */
@@ -168,9 +171,10 @@ export function isOwner(run: Run, token: string | null | undefined): boolean {
  */
 export function createRun(input: CreateRunInput): { run: Run; ownerToken: string } {
   const d = deps();
-  if (runs.size >= (d.maxRuns ?? MAX_RUNS) && !evictOne()) throw new RunsFullError();
+  if (g.__cartholdShuttingDown || (runs.size >= (d.maxRuns ?? MAX_RUNS) && !evictOne())) throw new RunsFullError();
   const mandate: Mandate = { ...DEFAULT_MANDATE, userRequest: input.userRequest };
-  const guard = createGuard({ mandate, ...d.guard });
+  // B1: Simulated runs are scripted, so the inspector stays regex-only (null) unless a test injects an llm.
+  const guard = createGuard({ mandate, ...d.guard, llm: d.guard?.llm ?? (input.mode === "redteam" ? null : undefined) });
   const ownerToken = randomBytes(32).toString("base64url");
   const run: Run = {
     id: crypto.randomUUID(), mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken),
@@ -188,7 +192,13 @@ export function createRun(input: CreateRunInput): { run: Run; ownerToken: string
       d.runners[input.mode]({
         userRequest: mandate.userRequest,
         mandateSummary: summarize(mandate),
-        onProposeOrder: guard.onProposeOrder,
+        onProposeOrder: async (order) => {
+          // m6: no new money once the shutdown sweep began; an authorize already in flight is voided as it lands.
+          if (g.__cartholdShuttingDown) return "BLOCKED by CartHold: server shutting down";
+          const result = await guard.onProposeOrder(order);
+          if (g.__cartholdShuttingDown) await Promise.allSettled(guard.getState().pendingHolds.map((id) => guard.systemVoid(id)));
+          return result;
+        },
         onPageRead: notePageRead ? (slug) => notePageRead.call(guard, slug) : undefined,
         onEvent: (event) => push(run, { kind: "agent", event }),
       }),
@@ -213,3 +223,23 @@ export function subscribeRun(run: Run, listener: (m: StreamMsg) => void): () => 
   run.listeners.add(listener);
   return unsubscribe;
 }
+
+/**
+ * Voids every pending hold in every run (shutdown sweep, B3). Waits at most capMs; never throws.
+ * ponytail: best-effort only. A crash or kill -9 still orphans holds; PayPal's own authorization expiry is the
+ * backstop. Real fix = persisted holds that a fresh process re-arms or voids (planned).
+ */
+export async function voidAllHolds(capMs = 8_000): Promise<void> {
+  g.__cartholdShuttingDown = true; // m6: createRun refuses and proposals are blocked from here on
+  const sweep = () =>
+    Promise.allSettled([...runs.values()].flatMap((r: Run) => r.guard.getState().pendingHolds.map((id: string) => r.guard.systemVoid(id))));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Second pass catches holds that landed during the first (an authorize in flight when the flag flipped).
+  await Promise.race([sweep().then(sweep), new Promise((r) => (timer = setTimeout(r, capMs)))]);
+  clearTimeout(timer);
+}
+
+// Render sends SIGTERM on redeploy / spin-down; the in-process auto-void timers would die with the process.
+// src/instrumentation.ts owns the SIGTERM handler (registered at boot, NEXT_MANUAL_SIG_HANDLE=1 in render.yaml) and
+// calls this. Published on globalThis instead of imported: this module's PayPal imports are "server-only".
+(globalThis as unknown as { __cartholdVoidAll?: () => Promise<unknown> }).__cartholdVoidAll = () => voidAllHolds();

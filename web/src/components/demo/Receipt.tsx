@@ -85,7 +85,7 @@ export function ReceiptInline({ row }: { row: Ids }) {
   const ids = idsOf(row);
   if (!ids.length) return <span className="text-ink-faint">None</span>;
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+    <span className="inline-flex max-w-full flex-wrap items-center gap-1">
       {ids.map(([k, v]) => (
         <CopyId key={k} label={k} value={v} compact />
       ))}

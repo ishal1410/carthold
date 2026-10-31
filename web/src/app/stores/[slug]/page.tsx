@@ -25,8 +25,8 @@ export default async function StorePage(props: PageProps<"/stores/[slug]">) {
   if (!store || !View) notFound();
   return (
     <>
-      {/* Room so the floating control never covers the store footer, padded inside the store's own background. */}
-      <div className="*:pb-20">
+      {/* Room for the floating control (about 80px tall with its inset) so it never covers the end of the page, padded inside the store's own background. */}
+      <div className="*:pb-28">
         <View store={store} />
       </div>
       <RevealControl hiddenCount={store.hidden.length} />

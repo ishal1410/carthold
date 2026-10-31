@@ -1,5 +1,6 @@
 import { formatUSD, type Store } from "@/data/stores";
 import { artLabel, barlow, barlowCondensed, DemoFooter, Hidden } from "./shared";
+import { AddToCart } from "./reveal";
 
 // Palette: pine #1E3A2B, lichen #E4E9DA, moss #8FA77A, blaze #E8B931, bark #2E2620
 const contours = Array.from({ length: 9 }, (_, i) => i);
@@ -89,12 +90,7 @@ export default function Northpine({ store }: { store: Store }) {
             </dl>
             <Hidden store={store} slot="details" />
 
-            <button
-              type="button"
-              className="mt-8 rounded-sm bg-[#1E3A2B] px-6 py-4 text-lg font-semibold text-[#E4E9DA] outline-offset-4 transition-colors hover:bg-[#2E5641] focus-visible:outline-2 focus-visible:outline-[#1E3A2B]"
-            >
-              Add to cart
-            </button>
+            <AddToCart className="mt-8 rounded-sm bg-[#1E3A2B] px-6 py-4 text-lg font-semibold text-[#E4E9DA] outline-offset-4 transition-colors hover:bg-[#2E5641] focus-visible:outline-2 focus-visible:outline-[#1E3A2B]" />
             <p className="mt-3 text-sm text-[#2E2620]/70">{store.shippingNote}</p>
           </div>
         </section>

@@ -4,11 +4,11 @@ import { AllCommunityModule, ModuleRegistry, type ColDef, type ICellRendererPara
 import { AgGridReact } from "ag-grid-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DecisionRow } from "../../lib/guard/guard";
-import { filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, statusLabel } from "./format";
+import { filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, statusLabel, verdictLabel } from "./format";
 import { headline, plainReason } from "../demo/reasons";
 import { gridTheme } from "./theme";
 import { ReceiptInline } from "../demo/Receipt";
-import { Badge, StatusPill, buttonClasses, cx } from "../ui";
+import { StatusPill, buttonClasses, cx } from "../ui";
 import "./grid.css";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -17,19 +17,16 @@ export type DecisionGridProps = {
   rows: DecisionRow[];
   onSelect?: (row: DecisionRow) => void;
   height?: number;
-  /** Rows came from the scripted compromised-agent replay, not a live model. */
-  simulated?: boolean;
 };
 
 // Renderers only read `data`, so the phone card list can reuse them with a bare row.
 type Cell = Pick<ICellRendererParams<DecisionRow>, "data">;
 
 const PILL = { allow: "allow", hold: "hold", block: "block" } as const;
-const VERDICT_WORD = { allow: "Allow", hold: "Hold", block: "Block" } as const;
 
 function VerdictPill({ data }: Cell) {
   if (!data) return null;
-  return <StatusPill status={PILL[data.verdict]} label={VERDICT_WORD[data.verdict]} size="sm" />;
+  return <StatusPill status={PILL[data.verdict]} label={verdictLabel(data.verdict)} size="sm" />;
 }
 
 function PayPalIds({ data }: Cell) {
@@ -51,25 +48,31 @@ function Countdown({ data }: Cell) {
   );
 }
 
+// Widths sum to fit a 1104px (max-w-6xl) grid without sideways scroll; Expires only shows while a hold is open.
+// The run's mode is on the run bar badge, so the grid has no Mode column (same for simulated and live runs).
 const columnDefs: ColDef<DecisionRow>[] = [
-  { field: "time", headerName: "Time", width: 92, valueFormatter: (p) => (p.value ? formatTime(p.value) : ""), cellClass: "figures text-ink-faint" },
-  { field: "merchant", headerName: "Merchant", width: 160, filter: "agTextColumnFilter" },
-  { field: "items", headerName: "Items", flex: 1, minWidth: 180, tooltipField: "items" },
+  { field: "time", headerName: "Time", width: 84, valueFormatter: (p) => (p.value ? formatTime(p.value) : ""), cellClass: "figures text-ink-faint" },
+  { field: "merchant", headerName: "Merchant", width: 140, filter: "agTextColumnFilter" },
+  { field: "items", headerName: "Items", flex: 1, minWidth: 120, tooltipField: "items" },
   {
-    field: "amountUsd", headerName: "Amount", width: 108, type: "rightAligned",
+    field: "amountUsd", headerName: "Amount", width: 96, type: "rightAligned",
     valueFormatter: (p) => (p.value == null ? "" : formatUsd(p.value)), cellClass: "figures",
     filter: "agNumberColumnFilter",
   },
-  { field: "verdict", headerName: "Verdict", width: 96, cellRenderer: VerdictPill },
   {
-    field: "status", headerName: "Status", width: 104, filter: "agTextColumnFilter", enableCellChangeFlash: true,
+    // The guard's first decision; Outcome is where the money ended up (a Hold can end Paid or Voided).
+    field: "verdict", headerName: "Guard verdict", width: 116, cellRenderer: VerdictPill,
+    valueFormatter: (p) => (p.value ? verdictLabel(p.value) : ""), headerTooltip: "The guard's first decision on this payment",
+  },
+  {
+    field: "status", headerName: "Outcome", width: 100, filter: "agTextColumnFilter", enableCellChangeFlash: true,
     valueFormatter: (p) => (p.value ? statusLabel(p.value) : ""),
     // Filter on the label the user sees ("Paid"), not the raw enum ("captured").
     filterValueGetter: (p) => (p.data ? statusLabel(p.data.status) : ""),
   },
   {
     // One line per row: a single block lists 7+ reasons, which blew rows up to ~400px. Full list is in the tooltip and the reveal panel.
-    field: "reasons", headerName: "Reasons", flex: 2, minWidth: 220,
+    field: "reasons", headerName: "Reasons", flex: 2, minWidth: 140,
     valueFormatter: (p) => {
       const r: string[] = p.value ?? [];
       // Lead with the reason that decided it, never a non-blocking "warning:".
@@ -79,18 +82,13 @@ const columnDefs: ColDef<DecisionRow>[] = [
     cellClass: "text-ink-muted",
   },
   {
-    colId: "paypal", headerName: "PayPal receipt", width: 300, sortable: false, cellRenderer: PayPalIds,
+    // Chips wrap onto a second line instead of widening the grid.
+    colId: "paypal", headerName: "PayPal receipt", width: 212, sortable: false, cellRenderer: PayPalIds, autoHeight: true, cellClass: "py-1.5",
     // Only used by CSV export; the cell itself renders PayPalIds.
     valueGetter: (p) => [p.data?.paypalOrderId, p.data?.authorizationId, p.data?.captureId].filter(Boolean).join(" "),
   },
-  { field: "expiresAt", headerName: "Expires", width: 92, sortable: false, cellRenderer: Countdown },
 ];
-
-const modeCol: ColDef<DecisionRow> = {
-  colId: "mode", headerName: "Mode", width: 112, sortable: false,
-  valueGetter: () => "Simulated",
-  cellRenderer: () => <Badge tone="hold">Simulated</Badge>,
-};
+const expiresCol: ColDef<DecisionRow> = { field: "expiresAt", headerName: "Expires", width: 84, sortable: false, cellRenderer: Countdown };
 
 // Unknown future statuses get no class (and render their raw name via statusLabel).
 const st = (p: { data?: DecisionRow }): string => p.data?.status ?? "";
@@ -105,7 +103,7 @@ const rowClassRules: RowClassRules<DecisionRow> = {
 // Up to this many rows the grid sizes to its content (no empty band); beyond it, fixed height + inner scroll.
 const AUTO_HEIGHT_MAX = 10;
 
-function DecisionCard({ row, simulated, onSelect }: { row: DecisionRow; simulated: boolean; onSelect?: (row: DecisionRow) => void }) {
+function DecisionCard({ row, onSelect }: { row: DecisionRow; onSelect?: (row: DecisionRow) => void }) {
   const lead = headline(row.reasons);
   return (
     <li className={`ag-st-${row.status === "unknown" ? "error" : row.status} overflow-hidden rounded-md border border-line bg-surface-1 text-sm shadow-raise`}>
@@ -119,7 +117,6 @@ function DecisionCard({ row, simulated, onSelect }: { row: DecisionRow; simulate
           <VerdictPill data={row} />
           <span className="text-ink-muted">{statusLabel(row.status)}</span>
           {row.status === "held" && <Countdown data={row} />}
-          {simulated && <Badge tone="hold">Simulated</Badge>}
           <span className="figures ml-auto text-2xs text-ink-faint">{formatTime(row.time)}</span>
         </span>
         {lead && (
@@ -138,7 +135,7 @@ function DecisionCard({ row, simulated, onSelect }: { row: DecisionRow; simulate
   );
 }
 
-export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }: DecisionGridProps) {
+export function DecisionGrid({ rows, onSelect, height = 420 }: DecisionGridProps) {
   const [statusPick, setStatus] = useState("all");
   const [search, setSearch] = useState("");
   const sorted = useMemo(() => newestFirst(rows), [rows]);
@@ -150,7 +147,8 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
   const status = statuses.includes(statusPick as DecisionRow["status"]) ? statusPick : "all";
   const rowData = useMemo(() => filterDecisions(sorted, status, search), [sorted, status, search]);
   const autoHeight = rowData.length <= AUTO_HEIGHT_MAX;
-  const cols = useMemo(() => (simulated ? [columnDefs[0], modeCol, ...columnDefs.slice(1)] : columnDefs), [simulated]);
+  const anyHeld = rows.some((r) => r.status === "held");
+  const cols = useMemo(() => (anyHeld ? [...columnDefs, expiresCol] : columnDefs), [anyHeld]);
   const grid = useRef<AgGridReact<DecisionRow>>(null);
   return (
     <div className="flex flex-col gap-3">
@@ -190,7 +188,7 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
       {/* Under 640px the grid needs a horizontal scroll, so phones get stacked cards (same rows, same filters). */}
       <ul className="flex flex-col gap-2 sm:hidden" aria-label="Decisions">
         {rowData.map((r) => (
-          <DecisionCard key={r.id} row={r} simulated={simulated} onSelect={onSelect} />
+          <DecisionCard key={r.id} row={r} onSelect={onSelect} />
         ))}
         {!rowData.length && <li className="py-6 text-center text-sm text-ink-faint">No decisions match.</li>}
       </ul>

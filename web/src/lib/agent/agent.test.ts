@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gemini as agentGemini, runAgent, systemPrompt, type AgentEvent, type AgentLlm, type Content, type Part } from "./agent";
 import { gemini as inspectorGemini } from "../inspector/inspect";
-import { GEMINI_MODEL, postGemini } from "./gemini";
+import { GEMINI_MODEL, GeminiRateLimitError, postGemini } from "./gemini";
 
 const call = (name: string, args: Record<string, unknown> = {}): Content => ({
   role: "model",
@@ -253,5 +253,135 @@ describe("R4 #7: closing Blocked line", () => {
       "Mug is held.\nBlocked: Basecamp Enamel Mug, 16 oz, Trail Coffee Kit (not what you asked for)",
     );
     expect(text).toBe("Mug is held.\nBlocked: Basecamp Enamel Mug, 16 oz + Trail Coffee Kit (followed hidden page text).");
+  });
+});
+
+describe("R5 B9: Gemini 429", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+  const ok = () => new Response(JSON.stringify({ candidates: [] }), { status: 200 });
+  const quota = (retryDelay?: string, headers: Record<string, string> = {}) =>
+    new Response(
+      JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", details: retryDelay ? [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay }] : [] } }),
+      { status: 429, headers },
+    );
+
+  /** Delay postGemini waited before its retry, in ms (fake timers). */
+  async function retryWait(first: Response): Promise<number> {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const fetchMock = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+    const done = postGemini("m:generateContent", {});
+    let waited = 0;
+    while (fetchMock.mock.calls.length < 2 && waited < 60_000) {
+      await vi.advanceTimersByTimeAsync(500);
+      waited += 500;
+    }
+    await done;
+    return waited;
+  }
+
+  it("honours the body's RetryInfo retryDelay", async () => expect(await retryWait(quota("7s"))).toBe(7000));
+  it("honours a Retry-After header", async () => expect(await retryWait(quota(undefined, { "retry-after": "3" }))).toBe(3000));
+  it("m3: a retry hint over the 10s cap throws GeminiRateLimitError at once, with no doomed retry", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValueOnce(quota("45s")).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(postGemini("m:generateContent", {})).rejects.toBeInstanceOf(GeminiRateLimitError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("m3: a retry hint under the cap (7s) waits 7s and retries", async () => expect(await retryWait(quota("7s"))).toBe(7000));
+  it("m3: a Retry-After header over the cap also throws at once", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValueOnce(quota(undefined, { "retry-after": "30" })).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(postGemini("m:generateContent", {})).rejects.toBeInstanceOf(GeminiRateLimitError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("waits 2s without a hint", async () => expect(await retryWait(quota())).toBe(2000));
+
+  it("a 429 after the retry throws GeminiRateLimitError; the agent tells the user it hit the free-tier limit", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => quota("0s")));
+    const e = await postGemini("m:generateContent", {}, 0).catch((x) => x);
+    expect(e).toBeInstanceOf(GeminiRateLimitError);
+    expect(e.message).toBe("gemini 429");
+    const events: AgentEvent[] = [];
+    await runAgent({ userRequest: "x", onProposeOrder: async () => "", onEvent: (ev) => events.push(ev), llm: async () => { throw e; } });
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      reason: "error",
+      error: "Gemini free-tier rate limit hit (15 requests/min). Wait a minute or use Simulated.",
+    });
+  });
+});
+
+describe("R5 B10: every HELD order counts for the claim rewrite", () => {
+  const mug = { merchant: "Northpine Outfitters", items: [{ name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 }], sourceSlug: "northpine" };
+  const cone = { merchant: "Brew & Bean", items: [{ name: "Ceramic Pour-Over Cone", quantity: 1, unitPriceUsd: 28 }], sourceSlug: "brew-and-bean" };
+
+  it("an earlier HELD order is still rewritten after a later order is blocked", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", cone), say("I bought the Basecamp mug for you."));
+    const results = ["HELD for human approval: authorization A1", "BLOCKED by CartHold: budget exceeded"];
+    const out = await runAgent({ userRequest: "mug and cone", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).not.toMatch(/I bought/);
+    expect(out.text).toContain("I proposed 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters");
+    expect(out.text).toContain("HELD waiting for your approval");
+  });
+
+  it("two HELD orders: the template names both", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", cone), say("I have ordered both items."));
+    const out = await runAgent({ userRequest: "mug and cone", onProposeOrder: async () => "HELD for human approval: authorization A", llm });
+    expect(out.text).toBe(
+      "I proposed 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters and 1 x Ceramic Pour-Over Cone ($28) from Brew & Bean; they are HELD waiting for your approval — nothing has been bought yet.",
+    );
+  });
+
+  it("HELD mug then Paid cone: a claim about the paid cone stays, a claim about the held mug is rewritten", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", cone), say("I purchased the Ceramic cone. I also bought the Basecamp mug."));
+    const results = ["HELD for human approval: authorization A1", "Paid: order O2, capture C2"];
+    const out = await runAgent({ userRequest: "mug and cone", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).toBe(
+      "I purchased the Ceramic cone. I proposed 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters; it is HELD waiting for your approval — nothing has been bought yet.",
+    );
+  });
+});
+
+describe("m1/m2: held-claim matching", () => {
+  const mug = { merchant: "Northpine Outfitters", items: [{ name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 }], sourceSlug: "northpine" };
+  const socks = { merchant: "Northpine Outfitters", items: [{ name: "Merino Trail Socks", quantity: 1, unitPriceUsd: 18 }], sourceSlug: "northpine" };
+  const HELD_TEMPLATE = "I proposed 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters; it is HELD waiting for your approval — nothing has been bought yet.";
+
+  it("m1: a true Paid sentence naming the same merchant as the held mug is kept", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", socks), say("I bought the Merino Trail Socks from Northpine Outfitters. I also bought the Basecamp mug."));
+    const results = ["HELD for human approval: authorization A1", "Paid: order O2, capture C2"];
+    const out = await runAgent({ userRequest: "mug and socks", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).toBe(`I bought the Merino Trail Socks from Northpine Outfitters. ${HELD_TEMPLATE}`);
+  });
+
+  it("m1: item words shared with a Paid item, or partial-word hits, do not count as naming the held item", async () => {
+    const trailMug = { ...mug, items: [{ name: "Trail Enamel Mug", quantity: 1, unitPriceUsd: 30 }] };
+    const { llm } = scripted(call("propose_order", trailMug), call("propose_order", socks), say("I purchased the trail socks. I bought a mugwort tea."));
+    const results = ["HELD for human approval: authorization A1", "Paid: order O2, capture C2"];
+    const out = await runAgent({ userRequest: "x", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).toBe("I purchased the trail socks. I bought a mugwort tea.");
+  });
+
+  it("m2: an order HELD then re-proposed and BLOCKED is only reported as Blocked", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", mug), say("Done."));
+    const results = ["HELD for human approval: authorization A1", "BLOCKED by CartHold: budget exceeded"];
+    const out = await runAgent({ userRequest: "mug", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).toBe("Done.\nBlocked: Basecamp Enamel Mug, 16 oz (over budget).");
+  });
+
+  it("m2: a held-then-blocked order no longer triggers the HELD rewrite", async () => {
+    const { llm } = scripted(call("propose_order", mug), call("propose_order", mug), say("I bought nothing; I ordered nothing."));
+    const results = ["HELD for human approval: authorization A1", "BLOCKED by CartHold: budget exceeded"];
+    const out = await runAgent({ userRequest: "mug", onProposeOrder: async () => results.shift()!, llm });
+    expect(out.text).not.toContain("HELD");
   });
 });

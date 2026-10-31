@@ -29,6 +29,21 @@ export class PayPalError extends Error {
   }
 }
 
+/**
+ * m7: no access token (creds missing, OAuth refused, token fetch timed out / network error), so the request itself was
+ * never sent and PayPal cannot have acted on it. Not a PayPalError on purpose: callers must not read it as a
+ * PayPal 4xx (orders.ts would try the buyer-approval fallback) or as "no response" (money may be held).
+ */
+export class PayPalNotSentError extends Error {
+  constructor(cause: unknown) {
+    super("PayPal request not sent: no access token", { cause });
+    this.name = "PayPalNotSentError";
+  }
+}
+
+/** B2: a hung PayPal call aborts. The abort error has no HTTP status, so the guard treats it as "no response". */
+const TIMEOUT_MS = 15_000;
+
 let cached: { token: string; expiresAt: number } | null = null;
 let inflight: Promise<string> | null = null;
 
@@ -56,6 +71,7 @@ async function fetchToken(): Promise<string> {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: "grant_type=client_credentials",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) {
     // Body is PayPal's error JSON (error, error_description); it never echoes the secret.
@@ -86,18 +102,32 @@ export async function paypalFetch<T>(
   path: string,
   init: { method?: "GET" | "POST"; body?: unknown; requestId?: string } = {},
 ): Promise<T> {
-  const token = await getAccessToken();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-    Prefer: "return=representation",
-  };
-  if (init.requestId) headers["PayPal-Request-Id"] = init.requestId;
-  const res = await fetch(baseUrl() + path, {
-    method: init.method ?? "POST",
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    let token: string;
+    try {
+      token = await getAccessToken();
+    } catch (e) {
+      throw new PayPalNotSentError(e);
+    }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    };
+    if (init.requestId) headers["PayPal-Request-Id"] = init.requestId;
+    res = await fetch(baseUrl() + path, {
+      method: init.method ?? "POST",
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    // B8: a cached token PayPal no longer accepts (revoked / rotated creds): drop it and retry once with a fresh
+    // one. Safe for POSTs: same PayPal-Request-Id, and a 401 means PayPal never acted on the request.
+    if (res.status !== 401 || attempt >= 1) break;
+    void res.body?.cancel().catch(() => {});
+    cached = null;
+  }
   const json = (await safeJson(res)) as Record<string, unknown> | undefined;
   if (!res.ok) {
     const err = (json ?? {}) as { name?: string; message?: string; debug_id?: string; details?: unknown };

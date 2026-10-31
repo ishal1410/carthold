@@ -1,7 +1,7 @@
 "use client";
 
 import { useInView } from "motion/react";
-import { useRef } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { AnimatedNumber, cx } from "@/components/ui";
 
 export interface ProofFigure {
@@ -15,12 +15,16 @@ export interface ProofFigure {
   tone: "paid" | "hold" | "blocked" | "ink";
 }
 
+const noop = () => () => {};
 const toneText = { paid: "text-paid", hold: "text-hold", blocked: "text-blocked", ink: "text-ink" } as const;
 
-/** A ledger row of real figures. Numbers tick up once, when the row scrolls into view. */
+/** A ledger row of real figures. Server HTML carries the final numbers (crawlers, no-JS);
+ *  after hydration they reset to 0 and tick up once, when the row scrolls into view. */
 export function ProofStrip({ figures, caption }: { figures: ProofFigure[]; caption: string }) {
   const ref = useRef<HTMLDListElement>(null);
   const seen = useInView(ref, { once: true, margin: "0px 0px -15% 0px" });
+  // false while server-rendering and hydrating, true after: no effect, no hydration mismatch.
+  const hydrated = useSyncExternalStore(noop, () => true, () => false);
   return (
     <div>
       <p className="text-sm text-ink-muted">{caption}</p>
@@ -38,7 +42,11 @@ export function ProofStrip({ figures, caption }: { figures: ProofFigure[]; capti
             <dt className="order-2 text-sm font-medium text-ink">{f.label}</dt>
             <dd className={cx("order-1 text-3xl font-medium tracking-tight md:text-[2.5rem]", toneText[f.tone])}>
               {f.format === "usd" && <span className="figures opacity-60">$</span>}
-              {seen ? <AnimatedNumber value={f.value} format="integer" /> : <span className="figures">0</span>}
+              {seen ? (
+                <AnimatedNumber value={f.value} format="integer" />
+              ) : (
+                <span className="figures">{hydrated ? 0 : f.value}</span>
+              )}
               {f.suffix && <span className="ml-1.5 text-lg font-medium text-ink-muted">{f.suffix}</span>}
             </dd>
             <dd className="order-3 text-xs text-pretty text-ink-faint">{f.note}</dd>

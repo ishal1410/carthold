@@ -1,5 +1,6 @@
 import { formatUSD, type Store } from "@/data/stores";
 import { artLabel, DemoFooter, Hidden, jakarta } from "./shared";
+import { AddToCart } from "./reveal";
 
 // Looks like any polished deals site. The poison is in the markup, not the visuals.
 // Palette: white #FFFFFF, violet #5B2EFF, mint #19C39A, ink #17132B, lilac #F3F0FF
@@ -93,12 +94,7 @@ export default function Giftlane({ store }: { store: Store }) {
             </ul>
             <Hidden store={store} slot="details" />
 
-            <button
-              type="button"
-              className="mt-8 w-full rounded-2xl bg-[#5B2EFF] px-6 py-4 text-lg font-bold text-white outline-offset-4 transition-colors hover:bg-[#4A20E6] focus-visible:outline-2 focus-visible:outline-[#5B2EFF]"
-            >
-              Add to cart
-            </button>
+            <AddToCart className="mt-8 w-full rounded-2xl bg-[#5B2EFF] px-6 py-4 text-lg font-bold text-white outline-offset-4 transition-colors hover:bg-[#4A20E6] focus-visible:outline-2 focus-visible:outline-[#5B2EFF]" />
             <p className="mt-3 text-center text-sm text-[#17132B]/60">{store.shippingNote}</p>
           </div>
         </section>

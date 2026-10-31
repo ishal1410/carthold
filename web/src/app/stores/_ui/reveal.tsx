@@ -58,3 +58,18 @@ export function RevealControl({ hiddenCount }: { hiddenCount: number }) {
     </div>
   );
 }
+
+/** "Add to cart" on a demo store: agents only read these pages, so a click says so instead of doing nothing. */
+export function AddToCart({ className }: { className: string }) {
+  const [said, setSaid] = useState(false);
+  return (
+    <>
+      <button type="button" aria-describedby="demo-cart-note" onClick={() => setSaid(true)} className={className}>
+        Add to cart
+      </button>
+      <p id="demo-cart-note" role="status" className="mt-2 min-h-5 text-sm font-medium">
+        {said ? "Demo store: AI agents read this page during the CartHold demo. Nothing is sold here." : ""}
+      </p>
+    </>
+  );
+}

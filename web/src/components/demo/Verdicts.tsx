@@ -8,6 +8,9 @@ import { Receipt } from "./Receipt";
 import { hasInjection, headline, isInspectorBlock, isWarning, orderReasons, plainReason, reasonTags, stripWarning } from "./reasons";
 
 export const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+/** Money PayPal actually took: captured rows only (pending and held are committed, not paid). */
+export const paidUsd = (rows: { status: string; amountUsd: number }[]) =>
+  rows.filter((r) => r.status === "captured").reduce((s, r) => s + r.amountUsd, 0);
 const HOLD_MS = 5 * 60_000;
 
 function useNow(active: boolean) {
@@ -140,6 +143,11 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
           <StatusPill status="hold" label="Held for you" />
           {simulated && <Badge tone="hold">Simulated</Badge>}
         </div>
+        {viewOnly && (
+          <p className="mt-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-ink">
+            View only. Only the tab that started this run can approve or reject it.
+          </p>
+        )}
         <div className="mt-5 flex items-start justify-between gap-5">
           <div className="min-w-0">
             <AnimatedNumber value={row.amountUsd} className="block text-money text-ink" />
@@ -166,11 +174,6 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
             </span>
           </Button>
         </div>
-        {viewOnly && (
-          <p className="mt-2 text-sm text-ink">
-            View only. Only the tab that started this run can approve or reject it.
-          </p>
-        )}
         <Receipt row={row} className="mt-4" />
       </Panel>
     </Reveal>
@@ -206,18 +209,19 @@ const PILL: Record<string, { status: Status; label?: string }> = {
   unknown: { status: "unknown", label: "Unclear" },
 };
 
-/** The few words a collapsed verdict needs: why it was stopped, or how it settled. */
-function gist(row: DecisionRow): string {
+/** The few words a collapsed verdict needs: why it was stopped, or how it settled. A view-only tab did not decide. */
+export function gist(row: DecisionRow, viewOnly = false): string {
+  const who = viewOnly ? "the run's owner" : "you";
   if (row.status === "blocked") return hasInjection(row) ? "followed hidden text" : (reasonTags(row.reasons)[0] ?? plainReason(headline(row.reasons)));
-  if (row.reasons.includes("rejected by user")) return "rejected by you";
+  if (row.reasons.includes("rejected by user")) return `rejected by ${who}`;
   if (row.reasons.some((r) => /^auto-voided/.test(r))) return "timed out";
-  if (row.status === "captured") return row.verdict === "hold" ? "approved by you" : "auto-paid, under limit";
+  if (row.status === "captured") return row.verdict === "hold" ? `approved by ${who}` : "auto-paid, under limit";
   if (row.status === "error" || row.status === "unknown") return "check PayPal";
   return "";
 }
 
 /** Every settled verdict: a one-line chip that opens into the full story. */
-function VerdictChip({ row, simulated, onReveal }: { row: DecisionRow; simulated: boolean; onReveal: (row: DecisionRow) => void }) {
+function VerdictChip({ row, simulated, viewOnly, onReveal }: { row: DecisionRow; simulated: boolean; viewOnly: boolean; onReveal: (row: DecisionRow) => void }) {
   const [open, setOpen] = useState(false);
   const reduce = useReducedMotion();
   const pill = PILL[row.status] ?? { status: "unknown" as Status, label: String(row.status) };
@@ -238,7 +242,7 @@ function VerdictChip({ row, simulated, onReveal }: { row: DecisionRow; simulated
         <span className={cx("figures shrink-0 text-sm", blocked ? "text-ink-muted line-through decoration-blocked/60" : "text-ink")}>{usd(row.amountUsd)}</span>
         <span className="min-w-0 flex-1 truncate text-sm">
           <span className="text-ink">{row.merchant}</span>
-          {gist(row) && <span className="text-ink-faint"> / {gist(row)}</span>}
+          {gist(row, viewOnly) && <span className="text-ink-faint"> / {gist(row, viewOnly)}</span>}
         </span>
         <ChevronDown aria-hidden strokeWidth={1.5} className={cx("size-4 shrink-0 text-ink-faint transition-transform duration-[var(--duration-base)] ease-snap", open && "rotate-180")} />
       </button>
@@ -338,7 +342,7 @@ export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecid
           <ul className="flex flex-col gap-2" aria-live="polite">
             {settled.map((r) => (
               <li key={r.id}>
-                <VerdictChip row={r} simulated={simulated} onReveal={onReveal} />
+                <VerdictChip row={r} simulated={simulated} viewOnly={viewOnly} onReveal={onReveal} />
               </li>
             ))}
           </ul>

@@ -9,9 +9,9 @@ const MAX_WINDOWS = 10_000;
 
 type Windows = Map<string, { start: number; end: number; count: number }>;
 // R4 #3: run and hold windows live in separate maps, so spraying /api/runs can never fill the hold map.
-type State = { runs: Windows; holds: Windows; day: string; live: number; streams: Map<string, number> };
+type State = { runs: Windows; holds: Windows; day: string; live: number; simDay: string; sim: number; streams: Map<string, number> };
 const g = globalThis as unknown as { __cartholdLimits?: State };
-const fresh = (): State => ({ runs: new Map(), holds: new Map(), day: "", live: 0, streams: new Map() });
+const fresh = (): State => ({ runs: new Map(), holds: new Map(), day: "", live: 0, simDay: "", sim: 0, streams: new Map() });
 const state = () => (g.__cartholdLimits ??= fresh());
 
 export const resetLimits = () => void (g.__cartholdLimits = fresh());
@@ -93,4 +93,34 @@ export function takeLiveSlot(now = new Date()): boolean {
   if (s.live >= (Number.isFinite(cap) ? cap : 60)) return false;
   s.live++;
   return true;
+}
+
+/** Counts one simulated run against today's (UTC) cap from SIMULATED_RUNS_PER_DAY (default 200). Simulated runs skip
+ *  Gemini but still make real PayPal sandbox calls (the redteam clean-mug retry authorizes an order). */
+export function takeSimulatedSlot(now = new Date()): boolean {
+  const s = state();
+  const day = now.toISOString().slice(0, 10);
+  if (s.simDay !== day) Object.assign(s, { simDay: day, sim: 0 });
+  const cap = Number(process.env.SIMULATED_RUNS_PER_DAY ?? 200);
+  if (s.sim >= (Number.isFinite(cap) ? cap : 200)) return false;
+  s.sim++;
+  return true;
+}
+
+/** Gives back a simulated slot takeSimulatedSlot counted today (B11). */
+export function refundSimulatedSlot() {
+  const s = state();
+  if (s.sim > 0) s.sim--;
+}
+
+/** Gives back a run slot takeIpSlot counted (B11: the run was never created). */
+export function refundIpSlot(ip: string) {
+  const w = state().runs.get(ip);
+  if (w && w.count > 0) w.count--;
+}
+
+/** Gives back a live slot takeLiveSlot counted today (B11). */
+export function refundLiveSlot() {
+  const s = state();
+  if (s.live > 0) s.live--;
 }

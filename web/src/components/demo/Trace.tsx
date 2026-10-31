@@ -25,15 +25,16 @@ function summarizeArgs(name: string, args: Record<string, unknown>) {
   return "";
 }
 
-/** Hold outcomes that happened after the agent's last word, so its final text is never left stale. */
-function holdUpdates(rows: DecisionRow[]): string[] {
+/** Hold outcomes that happened after the agent's last word, so its final text is never left stale. A view-only tab did not decide. */
+export function holdUpdates(rows: DecisionRow[], viewOnly = false): string[] {
   const out: string[] = [];
+  const who = viewOnly ? "The run's owner" : "You";
   for (const r of rows) {
     if (r.verdict !== "hold") continue;
     const what = `the ${usd(r.amountUsd)} hold at ${r.merchant}`;
-    if (r.reasons.includes("rejected by user")) out.push(`You rejected ${what}. Authorization voided, nothing was charged.`);
+    if (r.reasons.includes("rejected by user")) out.push(`${who} rejected ${what}. Authorization voided, nothing was charged.`);
     else if (r.reasons.some((x) => /^auto-voided/.test(x))) out.push(`${what.charAt(0).toUpperCase()}${what.slice(1)} timed out. Authorization voided, nothing was charged.`);
-    else if (r.status === "captured") out.push(`You approved ${what}. PayPal captured it.`);
+    else if (r.status === "captured") out.push(`${who} approved ${what}. PayPal captured it.`);
     else if (r.status === "error" || r.status === "unknown")
       out.push(`${what.charAt(0).toUpperCase()}${what.slice(1)} did not settle cleanly (${r.status === "unknown" ? "PayPal outcome unclear" : "PayPal error"}). Check the decision log.`);
   }
@@ -75,9 +76,9 @@ function GuardResult({ result, rows }: { result: string; rows: DecisionRow[] }) 
   );
 }
 
-export function Trace({ events, phase, mode, rows, className }: { events: AgentEvent[]; phase: Phase; mode: "live" | "redteam"; rows: DecisionRow[]; className?: string }) {
+export function Trace({ events, phase, mode, rows, viewOnly = false, className }: { events: AgentEvent[]; phase: Phase; mode: "live" | "redteam"; rows: DecisionRow[]; viewOnly?: boolean; className?: string }) {
   const done = events.find((e) => e.type === "done") as Extract<AgentEvent, { type: "done" }> | undefined;
-  const updates = done ? holdUpdates(rows) : [];
+  const updates = done ? holdUpdates(rows, viewOnly) : [];
   const last = events.at(-1);
   const announce =
     !last ? "" : last.type === "tool_call" ? `Agent calls ${last.name}` : last.type === "tool_result" && last.name === "propose_order" ? refusedText(last.result, rows) : last.type === "done" ? "Agent finished" : "";

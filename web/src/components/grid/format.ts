@@ -13,6 +13,10 @@ export function formatCountdown(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+const VERDICT_WORD: Record<Verdict, string> = { allow: "Allow", hold: "Hold", block: "Block" };
+/** The guard's first decision as the grid shows it (and the CSV exports it). */
+export const verdictLabel = (v: Verdict) => VERDICT_WORD[v] ?? v;
+
 export const VERDICT_CLASS: Record<Verdict, string> = {
   allow: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
   hold: "bg-amber-500/15 text-amber-300 ring-amber-500/30",

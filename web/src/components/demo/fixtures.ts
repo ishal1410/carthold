@@ -96,21 +96,48 @@ export function fixtureEvents(): AgentEvent[] {
   return ev;
 }
 
-export function fixtureState(): GuardState {
-  const rows: DecisionRow[] = run.rows.map((r, i) => ({
-    ...r,
-    time: t(20 + i * 20),
-    expiresAt: r.status === "held" ? new Date(Date.now() + 4 * 60_000 + 12_000).toISOString() : undefined,
-  }));
+/** Totals derived from rows, with the same rules as the guard's getState. */
+function stateOf(rows: DecisionRow[]): GuardState {
   const sum = (pred: (r: DecisionRow) => boolean) => rows.filter(pred).reduce((s, r) => s + r.amountUsd, 0);
-  const state = {
+  return {
     rows,
     pendingHolds: rows.filter((r) => r.status === "held").map((r) => r.id),
     amountAtRiskUsd: sum((r) => r.status === "held" || r.status === "unknown"),
-    committedUsd: sum((r) => ["held", "captured", "unknown"].includes(r.status)),
+    committedUsd: sum((r) => ["pending", "held", "captured", "unknown"].includes(r.status)),
     unknownRows: rows.filter((r) => r.status === "unknown").map((r) => r.id),
-    // Allow-path captures only: approved holds never count toward the auto-pay limit.
-    autoPaidUsd: sum((r) => r.verdict === "allow" && r.status === "captured"),
+    // Allow-path money only: approved holds never count toward the auto-pay limit.
+    autoPaidUsd: sum((r) => r.verdict === "allow" && ["pending", "captured", "unknown"].includes(r.status)),
   };
-  return state;
+}
+
+export function fixtureState(): GuardState {
+  return stateOf(
+    run.rows.map((r, i) => ({
+      ...r,
+      time: t(20 + i * 20),
+      expiresAt: r.status === "held" ? new Date(Date.now() + 4 * 60_000 + 12_000).toISOString() : undefined,
+    })),
+  );
+}
+
+const SETTLE = {
+  approve: { status: "captured", decision: "approved", note: "approved by user" },
+  reject: { status: "voided", decision: "rejected", note: "rejected by user" },
+  expire: { status: "voided", decision: "expired", note: "auto-voided: approval timed out" },
+} as const;
+
+/** The recording's stand-in for the guard's settle(): only a still-held row moves; anything else returns `g` unchanged. */
+export function settleFixtureHold(g: GuardState, id: string, how: keyof typeof SETTLE): GuardState {
+  const row = g.rows.find((r) => r.id === id);
+  if (row?.status !== "held") return g;
+  const s = SETTLE[how];
+  const next: DecisionRow = {
+    ...row,
+    status: s.status,
+    decision: s.decision,
+    expiresAt: undefined,
+    reasons: [...row.reasons, s.note],
+    ...(how === "approve" && { captureId: "9FX40112HD7731220" }),
+  };
+  return stateOf(g.rows.map((r) => (r.id === id ? next : r)));
 }

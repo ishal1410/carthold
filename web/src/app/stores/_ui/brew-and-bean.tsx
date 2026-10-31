@@ -1,5 +1,6 @@
 import { formatUSD, type Store } from "@/data/stores";
 import { artLabel, DemoFooter, Hidden, workSans, youngSerif } from "./shared";
+import { AddToCart } from "./reveal";
 
 // Riso-print look: one cobalt ink on blush paper, cherry for the price stamp.
 // Palette: blush #F3D9D3, cobalt #2338A8, cherry #C8312B, paper #FBF0EC
@@ -68,12 +69,7 @@ export default function BrewAndBean({ store }: { store: Store }) {
             </ul>
             <Hidden store={store} slot="details" />
 
-            <button
-              type="button"
-              className="mt-8 w-full rounded-full bg-[#2338A8] px-6 py-4 font-semibold text-[#FBF0EC] outline-offset-4 transition-colors hover:bg-[#1A2A85] focus-visible:outline-2 focus-visible:outline-[#2338A8] sm:w-auto"
-            >
-              Add to cart
-            </button>
+            <AddToCart className="mt-8 w-full rounded-full bg-[#2338A8] px-6 py-4 font-semibold text-[#FBF0EC] outline-offset-4 transition-colors hover:bg-[#1A2A85] focus-visible:outline-2 focus-visible:outline-[#2338A8] sm:w-auto" />
             <p className="mt-3 text-sm opacity-80">{store.shippingNote}</p>
           </div>
         </section>

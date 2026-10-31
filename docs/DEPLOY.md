@@ -37,7 +37,7 @@ git push -u origin main
    - `PUBLIC_ORIGIN`: leave it empty for now.
 
    These values are set by the Blueprint: `PAYPAL_ENVIRONMENT=SANDBOX`, `CLIENT_IP_HEADER=true-client-ip`, `TRUSTED_PROXY_HOPS=1`,
-   `LIVE_RUNS_PER_DAY=60`.
+   `LIVE_RUNS_PER_DAY=60`, `SIMULATED_RUNS_PER_DAY=200`.
 
    `CLIENT_IP_HEADER=true-client-ip` is required on Render. Cloudflare sits in front of Render and sets `True-Client-IP`
    to the real client address. Render only appends to `X-Forwarded-For`, so a value the client sent survives there
@@ -68,9 +68,9 @@ for i in 1 2 3 4 5 6 7; do curl -s -o /dev/null -w "%{http_code} " -X POST $URL/
 - If you get seven `201`s, the spoofed header is being trusted. Check that `CLIENT_IP_HEADER` is set to
   `true-client-ip` on the service's **Environment** page. Without it, the app falls back to `X-Forwarded-For`, which
   Render does not clean.
-- `redteam` runs use a scripted agent and do not count against `LIVE_RUNS_PER_DAY`. A run starts as soon as it is
-  created, though, so the guard can still make PayPal sandbox and inspector LLM calls. The 6 accepted runs cost
-  that much.
+- `redteam` runs use a scripted agent and count against `SIMULATED_RUNS_PER_DAY`, not `LIVE_RUNS_PER_DAY`. A run
+  starts as soon as it is created, and the clean mug retry makes real PayPal sandbox calls (no Gemini calls). The 6
+  accepted runs cost that much.
 - This test uses up your own run limit for 10 minutes.
 
 Finally, open the site in a browser and run one **live** run end to end.
@@ -79,8 +79,10 @@ Finally, open the site in a browser and run one **live** run end to end.
 
 - **Warm-up.** Free services sleep after about 15 minutes without traffic, and the next request takes about a minute to
   wake the service. Before a demo or a judging window, open the URL a minute or two ahead.
-- **Quota.** `LIVE_RUNS_PER_DAY` caps real Gemini and PayPal runs across all users per UTC day. After the cap is hit,
-  users see a 429 and are offered the simulated run. The counter is held in memory, so it resets when the service
+- **Quota.** `LIVE_RUNS_PER_DAY` caps Live runs (the Gemini agent plus PayPal sandbox calls) across all users per UTC
+  day. After the cap is hit, users see a 429 and are offered the simulated run. `SIMULATED_RUNS_PER_DAY` (default 200)
+  caps Simulated runs the same way, since each one can authorize a real sandbox order; past it, users are pointed
+  to the recorded run at `/demo?fixture=1`. The counter is held in memory, so it resets when the service
   sleeps or redeploys. Lower the value if your Gemini free-tier quota is tight.
 - **Single instance.** The rate limits are in-process, so keep the service at one instance.
 - **Rollback.** In the Render dashboard, open **Events**, pick a previous deploy and choose **Rollback**. To take the app offline,

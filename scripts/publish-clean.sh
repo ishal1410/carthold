@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Make a public-ready copy of HEAD with NO git history (older commits leak a local path in a planning note).
+# Makes a public copy of HEAD without git history.
 # Never pushes. Usage:
 #   bash scripts/publish-clean.sh --dry-run     # export + scan only, then delete the copy
 #   bash scripts/publish-clean.sh [OUT_DIR]     # export + scan + one fresh local commit in OUT_DIR

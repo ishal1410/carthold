@@ -25,7 +25,11 @@ services:
         value: true-client-ip
       - key: TRUSTED_PROXY_HOPS # fallback only, when CLIENT_IP_HEADER is absent
         value: "1"
-      - key: LIVE_RUNS_PER_DAY # global daily cap on real Gemini + PayPal runs
+      - key: LIVE_RUNS_PER_DAY # global daily cap on Live runs (each one drives the Gemini agent, plus PayPal sandbox calls)
         value: "60"
+      - key: SIMULATED_RUNS_PER_DAY # global daily cap on Simulated runs (no Gemini, but real PayPal sandbox authorize/void calls)
+        value: "200"
+      - key: NEXT_MANUAL_SIG_HANDLE # next start skips its own SIGTERM exit, so session.ts can void held PayPal authorizations first (next/dist/server/lib/start-server.js)
+        value: "1"
       - key: PUBLIC_ORIGIN # set after the first deploy to https://<service>.onrender.com (no trailing slash)
         sync: false

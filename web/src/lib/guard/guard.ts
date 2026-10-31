@@ -2,8 +2,9 @@
 // Plug `onProposeOrder` straight into runAgent. Server only (PayPal creds live behind orders.ts).
 import { getPageText, getStore, stores, type Product } from "../../data/stores";
 import type { AgentOrder } from "../agent/agent";
-import { flaggedLines, sentencesOf, type FlaggedLine } from "../inspector/backstop";
+import { detectInjection, flaggedLines, sentencesOf, type FlaggedLine } from "../inspector/backstop";
 import { inspect, type Llm } from "../inspector/inspect";
+import { PayPalNotSentError } from "../paypal/client";
 import * as orders from "../paypal/orders";
 import { evaluate, type Mandate, type Verdict } from "../policy/policy";
 
@@ -59,8 +60,8 @@ export type GuardState = {
 
 export type GuardOptions = {
   mandate: Mandate;
-  /** Inspector LLM. Omitted: inspect() uses Gemini if GEMINI_API_KEY is set, else regex backstop only. */
-  llm?: Llm;
+  /** Inspector LLM. Omitted: inspect() uses Gemini if GEMINI_API_KEY is set, else regex backstop only. null: regex backstop only, never an LLM. */
+  llm?: Llm | null;
   paypal?: PayPalApi;
   /** Auto-void a hold nobody decided on after this long. Default 5 min. */
   holdTimeoutMs?: number;
@@ -74,6 +75,7 @@ const statusOf = (e: unknown) => {
 /** PayPal error text (paths, ids, debug ids) stays in the server log; rows and the agent get a generic line. */
 function ppError(e: unknown, step: string): string {
   console.error(`[carthold] PayPal ${step} failed:`, e, (e as { details?: unknown } | null)?.details ?? "");
+  if (e instanceof PayPalNotSentError) return "PayPal unavailable (request not sent)";
   const s = statusOf(e);
   return s === undefined ? "PayPal error (no response)" : `PayPal error (status ${s})`;
 }
@@ -193,7 +195,10 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
       slugs.map(async (slug) => {
         const text = getPageText(slug);
         const hidden = getStore(slug)?.hidden.map((h) => h.text) ?? [];
-        const insp = await inspect(text, mandate.userRequest, order, llm, { hidden, merchantPage: slug === store.slug });
+        // null = no LLM at all (inspect() would treat undefined as "use Gemini if a key is set").
+        const insp = llm === null
+          ? { ...detectInjection(text, mandate.userRequest), llm: false, quote: null }
+          : await inspect(text, mandate.userRequest, order, llm, { hidden, merchantPage: slug === store.slug });
         return { slug, insp, lines: flaggedLines(text, mandate.userRequest) };
       }),
     );
@@ -325,8 +330,8 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
       const why = ppError(e, "create/authorize");
       if (row.authorizationId) return voidOrUnknown(row, row.authorizationId, why);
       const s = statusOf(e);
-      if (s !== undefined && s < 500) {
-        // A definitive 4xx: PayPal refused, nothing is held.
+      if (e instanceof PayPalNotSentError || (s !== undefined && s < 500)) {
+        // A definitive 4xx (PayPal refused) or no token (m7: nothing was sent): nothing is held.
         update(row, { status: "error", reasons: [...row.reasons, why] });
         return `Payment failed: ${why}`;
       }
@@ -414,6 +419,8 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
     notePageRead: (slug: string) => void pagesRead.add(String(slug)),
     approve: (holdId: string) => settle(holdId, "capture", "approved by user", "approved"),
     reject: (holdId: string) => settle(holdId, "void", "rejected by user", "rejected"),
+    /** The server voids a hold itself (shutdown sweep): same path as reject, decision "system-voided". */
+    systemVoid: (holdId: string) => settle(holdId, "void", "auto-voided: server shutting down", "system-voided"),
     getState,
     subscribe(listener: (s: GuardState) => void) {
       listeners.add(listener);

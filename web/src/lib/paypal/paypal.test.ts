@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { baseUrl, getAccessToken, resetTokenCache } from "./client";
+import { PayPalNotSentError, baseUrl, getAccessToken, resetTokenCache } from "./client";
 import { authorizeOrder, captureAuthorization, createAuthorizeOrder, getOrder, voidAuthorization } from "./orders";
 
 type Call = { url: string; init: RequestInit };
@@ -151,5 +151,102 @@ describe("orders", () => {
     mockPayPal();
     expect((await getOrder("ORDER1")).status).toBe("COMPLETED");
     expect(paths()).toContain("GET /v2/checkout/orders/ORDER1");
+  });
+});
+
+describe("R5: timeout and 401", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("B2: a hung PayPal call is aborted after 15s and surfaces as a no-status (network) error", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
+    // Never resolves on its own: only the abort signal can end it.
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_res, rej) => {
+      const s = init.signal!;
+      if (s.aborted) rej(s.reason);
+      s.addEventListener("abort", () => rej(s.reason));
+    })));
+    const err = await getAccessToken().catch((e) => e);
+    expect(err).toMatchObject({ name: "TimeoutError" });
+    expect((err as { status?: unknown }).status).toBeUndefined(); // guard: no status = "no response" -> unknown
+    expect(timeout).toHaveBeenCalledWith(15_000);
+
+    // paypalFetch itself (token cached) also times out.
+    timeout.mockRestore();
+    mockPayPal();
+    await getAccessToken();
+    const t2 = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => Promise.reject(init.signal!.reason)));
+    await expect(getOrder("ORDER1")).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(t2).toHaveBeenCalledWith(15_000);
+  });
+
+  it("B8: a 401 clears the cached token, fetches a new one and retries once", async () => {
+    let tokenN = 0;
+    const orderAuth: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (path === "/v1/oauth2/token") return json({ access_token: `T${++tokenN}`, expires_in: 32400 });
+      const a = (init.headers as Record<string, string>).Authorization;
+      orderAuth.push(a);
+      return a === "Bearer T1" ? json({ name: "AUTHENTICATION_FAILURE" }, 401) : json({ id: "ORDER1", status: "COMPLETED" });
+    }));
+    await getAccessToken(); // caches T1 (revoked server-side)
+    await expect(getOrder("ORDER1")).resolves.toMatchObject({ id: "ORDER1" });
+    expect(orderAuth).toEqual(["Bearer T1", "Bearer T2"]);
+    expect(tokenN).toBe(2);
+  });
+
+  it("B8: a second 401 is thrown, not retried forever", async () => {
+    let tokens = 0;
+    let orderCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (new URL(url).pathname === "/v1/oauth2/token") return json({ access_token: `T${++tokens}`, expires_in: 32400 });
+      orderCalls++;
+      return json({ name: "AUTHENTICATION_FAILURE" }, 401);
+    }));
+    await expect(getOrder("ORDER1")).rejects.toMatchObject({ status: 401 });
+    expect(orderCalls).toBe(2);
+  });
+});
+
+describe("m7: no token = nothing sent to PayPal", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("missing PAYPAL creds -> PayPalNotSentError, no request at all", async () => {
+    mockPayPal();
+    delete process.env.PAYPAL_CLIENT_SECRET;
+    await expect(createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant)).rejects.toBeInstanceOf(PayPalNotSentError);
+    expect(calls).toEqual([]);
+  });
+
+  it("token fetch timeout -> PayPalNotSentError, the order call is never made", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (new URL(url).pathname === "/v1/oauth2/token") throw new DOMException("timed out", "TimeoutError");
+      return json({ id: "ORDER1", status: "COMPLETED" });
+    }));
+    await expect(getOrder("ORDER1")).rejects.toBeInstanceOf(PayPalNotSentError);
+    expect(paths()).toEqual(["POST /v1/oauth2/token"]);
+  });
+
+  it("OAuth refused (bad creds) on create -> PayPalNotSentError, no buyer-approval fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return json({ error: "invalid_client" }, 401);
+    }));
+    await expect(createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant)).rejects.toBeInstanceOf(PayPalNotSentError);
+    expect(paths()).toEqual(["POST /v1/oauth2/token"]);
+  });
+
+  it("401 then the refresh token fetch fails -> PayPalNotSentError (PayPal never acted)", async () => {
+    let tokenN = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (new URL(url).pathname === "/v1/oauth2/token") {
+        if (++tokenN > 1) throw new TypeError("fetch failed");
+        return json({ access_token: "T1", expires_in: 32400 });
+      }
+      return json({ name: "AUTHENTICATION_FAILURE" }, 401);
+    }));
+    await expect(getOrder("ORDER1")).rejects.toBeInstanceOf(PayPalNotSentError);
   });
 });

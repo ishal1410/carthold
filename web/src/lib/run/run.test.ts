@@ -4,9 +4,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ connection: async () => {} }));
 
 import type { PayPalApi } from "../guard/guard";
-import { DEFAULT_MANDATE, createRun, getRun, resetRuns, setRunDeps, subscribeRun, type Runner, type StreamMsg } from "./session";
+import { DEFAULT_MANDATE, RunsFullError, createRun, getRun, isSettled, resetRuns, setRunDeps, subscribeRun, voidAllHolds, type Runner, type StreamMsg } from "./session";
 import { clientIp, resetLimits, takeHoldSlot, takeIpSlot } from "./limits";
 import { readJsonPost } from "./http";
+import { runRedteam } from "../redteam/redteam";
 import { POST as createRunRoute } from "../../app/api/runs/route";
 import { GET as streamRoute } from "../../app/api/runs/[runId]/stream/route";
 import { POST as holdRoute } from "../../app/api/runs/[runId]/holds/[rowId]/route";
@@ -146,6 +147,51 @@ describe("POST /api/runs", () => {
       expect((await createRunRoute(post({ ...MUG, mode: "redteam" }, { "x-forwarded-for": "c" }))).status).toBe(201);
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("M1: 429 once SIMULATED_RUNS_PER_DAY simulated runs are used; live runs still allowed", async () => {
+    vi.stubEnv("SIMULATED_RUNS_PER_DAY", "2");
+    try {
+      const RT = { ...MUG, mode: "redteam" };
+      for (const ip of ["a", "b"]) expect((await createRunRoute(post(RT, { "x-forwarded-for": ip }))).status).toBe(201);
+      const res = await createRunRoute(post(RT, { "x-forwarded-for": "c" }));
+      expect(res.status).toBe(429);
+      expect((await res.json()).error).toBe("daily demo limit reached, try the recorded run at /demo?fixture=1 or come back tomorrow");
+      expect((await createRunRoute(post(MUG, { "x-forwarded-for": "c" }))).status).toBe(201);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("M1: simulated cap resets on the next UTC day", async () => {
+    const { takeSimulatedSlot } = await import("./limits");
+    vi.stubEnv("SIMULATED_RUNS_PER_DAY", "1");
+    try {
+      expect(takeSimulatedSlot(new Date("2026-10-31T23:59:00Z"))).toBe(true);
+      expect(takeSimulatedSlot(new Date("2026-10-31T23:59:30Z"))).toBe(false);
+      expect(takeSimulatedSlot(new Date("2026-11-01T00:00:01Z"))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("M1: a 503 (runs full) refunds the simulated slot", async () => {
+    resetRuns();
+    vi.stubEnv("SIMULATED_RUNS_PER_DAY", "2");
+    try {
+      let finish = () => {};
+      const slow: Runner = () => new Promise<void>((r) => (finish = r));
+      setRunDeps({ runners: { live: slow, redteam: slow }, guard: { llm: cleanLlm, paypal: pp }, maxRuns: 1 });
+      const RT = { ...MUG, mode: "redteam" };
+      const first = await startRun(RT);
+      for (let i = 0; i < 4; i++) expect((await createRunRoute(post(RT, { "x-forwarded-for": `s${i}` }))).status).toBe(503);
+      finish();
+      await vi.waitFor(() => expect(getRun(first)!.ended).toBe(true));
+      expect((await createRunRoute(post(RT, { "x-forwarded-for": "s9" }))).status).toBe(201);
+    } finally {
+      vi.unstubAllEnvs();
+      resetRuns();
     }
   });
 
@@ -632,5 +678,177 @@ describe("R4 #11: copy", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("R5 server bugs", () => {
+  it("B1: a Simulated (redteam) run never calls Gemini, even with GEMINI_API_KEY set; live still does", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response("no", { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { paypal: pp } }); // no injected llm
+      const geminiCalls = () => fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("generativelanguage")).length;
+      await waitEnd(await startRun({ ...MUG, mode: "redteam" }));
+      expect(geminiCalls()).toBe(0);
+      await waitEnd(await startRun(MUG));
+      expect(geminiCalls()).toBeGreaterThan(0); // control: live runs keep the LLM inspector
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      err.mockRestore();
+    }
+  });
+
+  it("m9: real runRedteam through createRun, mug request: no Gemini fetch, row 1 blocked, row 2 held with an authorization", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const fetchMock = vi.fn(async () => new Response("no", { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      setRunDeps({ runners: { live: holdRunner, redteam: runRedteam }, guard: { paypal: pp } }); // production runner, no injected llm
+      const { run } = createRun({ userRequest: "Buy me a camping coffee mug under $40", mode: "redteam" });
+      await vi.waitFor(() => expect(run.ended).toBe(true), { timeout: 15_000 });
+      expect(fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("generativelanguage"))).toEqual([]);
+      const rows = run.guard.getState().rows;
+      expect(rows).toHaveLength(2);
+      expect(rows[0].status).toBe("blocked");
+      expect(rows[1]).toMatchObject({ status: "held", authorizationId: "A1" });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      resetRuns();
+    }
+  }, 20_000);
+
+  it("B7: a hold whose approve is still capturing is not settled (timer gone, row still held)", async () => {
+    let finishCapture = () => {};
+    vi.mocked(pp.captureAuthorization).mockImplementation(
+      (a: string) => new Promise((r) => (finishCapture = () => r({ id: `C-${a}`, status: "COMPLETED" }))),
+    );
+    const runId = await startRun();
+    const rowId = holdId(await waitEnd(runId));
+    const run = getRun(runId)!;
+    const approving = run.guard.approve(rowId);
+    expect(run.guard.getState().pendingHolds).toEqual([]);
+    expect(run.guard.getState().rows[0].status).toBe("held");
+    expect(isSettled(run)).toBe(false);
+    finishCapture();
+    await approving;
+    expect(isSettled(run)).toBe(true);
+  });
+
+  it("B11: a 503 (runs full) refunds the IP and live slots", async () => {
+    resetRuns();
+    vi.stubEnv("LIVE_RUNS_PER_DAY", "2");
+    try {
+      let finish = () => {};
+      const slow: Runner = () => new Promise<void>((r) => (finish = r));
+      setRunDeps({ runners: { live: slow, redteam: slow }, guard: { llm: cleanLlm, paypal: pp }, maxRuns: 1 });
+      const first = await startRun();
+      for (let i = 0; i < 8; i++) expect((await createRunRoute(post(MUG))).status).toBe(503);
+      finish();
+      await vi.waitFor(() => expect(getRun(first)!.ended).toBe(true));
+      expect((await createRunRoute(post(MUG))).status).toBe(201); // 2nd live slot and 2nd IP slot still free
+    } finally {
+      vi.unstubAllEnvs();
+      resetRuns();
+    }
+  });
+
+  it("B12: a stream for a run whose only open money is unresolvable unknown rows closes; TTL eviction still applies", async () => {
+    resetRuns();
+    vi.mocked(pp.voidAuthorization).mockRejectedValue(new Error("network"));
+    let now = 1_000_000;
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp }, maxRuns: 1, resolveEveryMs: 20, now: () => now });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const runId = await startRun();
+    const rowId = holdId(await waitEnd(runId));
+    const run = getRun(runId)!;
+    const getState = run.guard.getState;
+    run.guard.getState = () => ({ ...getState(), unresolvable: [rowId] }) as ReturnType<typeof getState>;
+    await run.guard.reject(rowId);
+    expect(run.guard.getState().rows[0].status).toBe("unknown");
+    const res = await streamRoute(new Request(`http://x/api/runs/${runId}/stream`), params({ runId }));
+    const text = await res.text(); // resolves only if the server closes the stream
+    expect(text.split("\n\n").filter((p) => p.startsWith("data: ")).at(-1)).toBe('data: {"kind":"end"}');
+    expect(run.listeners.size).toBe(0);
+    expect((await createRunRoute(post(MUG))).status).toBe(503); // not evicted before the TTL
+    now += 31 * 60_000;
+    expect((await createRunRoute(post(MUG))).status).toBe(201);
+    err.mockRestore();
+    resetRuns();
+  });
+
+  it("B3: voidAllHolds voids every pending hold across runs (system-voided)", async () => {
+    resetRuns();
+    const a = await startRun();
+    const b = await startRun();
+    await waitEnd(a);
+    await waitEnd(b);
+    await voidAllHolds();
+    for (const id of [a, b]) {
+      const s = getRun(id)!.guard.getState();
+      expect(s.pendingHolds).toEqual([]);
+      expect(s.rows[0]).toMatchObject({ status: "voided", decision: "system-voided" });
+    }
+    expect(pp.voidAuthorization).toHaveBeenCalledTimes(2);
+    resetRuns();
+  });
+
+  it("B3: voidAllHolds gives up after its time cap when PayPal hangs", async () => {
+    resetRuns();
+    vi.mocked(pp.voidAuthorization).mockImplementation(() => new Promise(() => {}));
+    await waitEnd(await startRun());
+    const t = Date.now();
+    await voidAllHolds(50);
+    expect(Date.now() - t).toBeLessThan(1000);
+    resetRuns();
+  });
+});
+
+describe("m6: shutdown sweep", () => {
+  afterEach(() => resetRuns());
+
+  it("new runs get 503 once the sweep has started", async () => {
+    resetRuns();
+    await voidAllHolds(50);
+    const res = await createRunRoute(post(MUG));
+    expect(res.status).toBe(503);
+    expect(() => createRun({ userRequest: "x", mode: "redteam" })).toThrow(RunsFullError);
+  });
+
+  it("a proposal arriving while shutting down is blocked before PayPal", async () => {
+    resetRuns();
+    let go = () => {};
+    const gate = new Promise<void>((r) => (go = r));
+    let result = "";
+    const late: Runner = async ({ onProposeOrder, onEvent = () => {} }) => {
+      await gate;
+      result = await onProposeOrder({ merchant: "Brew & Bean", items: [{ name: "Ceramic Pour-Over Cone", quantity: 1, unitPriceUsd: 28 }], sourceSlug: "brew-and-bean" });
+      onEvent({ type: "done", reason: "final_answer", text: "ok" });
+    };
+    setRunDeps({ runners: { live: late, redteam: late }, guard: { llm: cleanLlm, paypal: pp } });
+    const runId = await startRun();
+    await voidAllHolds(50);
+    go();
+    await vi.waitFor(() => expect(getRun(runId)!.ended).toBe(true));
+    expect(result).toBe("BLOCKED by CartHold: server shutting down");
+    expect(pp.createAuthorizeOrder).not.toHaveBeenCalled();
+  });
+
+  it("a hold whose authorize was in flight when the sweep began is still voided", async () => {
+    resetRuns();
+    let release = () => {};
+    vi.mocked(pp.createAuthorizeOrder).mockImplementation(
+      () => new Promise((r) => (release = () => r({ id: "O1", status: "COMPLETED", authorization: { id: "A1", status: "CREATED" } } as never))),
+    );
+    const runId = await startRun();
+    await vi.waitFor(() => expect(pp.createAuthorizeOrder).toHaveBeenCalled());
+    const sweep = voidAllHolds(2_000);
+    release();
+    await sweep;
+    await vi.waitFor(() => expect(getRun(runId)!.guard.getState().rows[0]).toMatchObject({ status: "voided", decision: "system-voided" }));
+    expect(getRun(runId)!.guard.getState().pendingHolds).toEqual([]);
   });
 });

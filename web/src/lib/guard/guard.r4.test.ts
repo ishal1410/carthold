@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { stores } from "../../data/stores";
-import { PayPalError } from "../paypal/client";
+import { PayPalError, PayPalNotSentError } from "../paypal/client";
 import type { Mandate } from "../policy/policy";
 import { createGuard, type PayPalApi } from "./guard";
 
@@ -136,5 +136,21 @@ describe("R4-5 dictated price formats", () => {
     const g = createGuard({ mandate: M(MUGREQ), paypal: pp(), holdTimeoutMs: 60_000 });
     expect(await g.onProposeOrder(mugOrder)).toMatch(/^HELD/);
     await g.reject("d1");
+  });
+});
+
+describe("m7: token failure maps to error, not unknown", () => {
+  it("createAuthorizeOrder throws PayPalNotSentError -> row error, nothing at risk or committed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const paypal = pp({ createAuthorizeOrder: vi.fn(async () => { throw new PayPalNotSentError(new Error("PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET not set")); }) });
+    const g = createGuard({ mandate: M(MUGREQ), llm: null, paypal });
+    const out = await g.onProposeOrder(mugOrder);
+    expect(out).toBe("Payment failed: PayPal unavailable (request not sent)");
+    expect(out).not.toMatch(/money may be held/);
+    const s = g.getState();
+    expect(s.rows[0].status).toBe("error");
+    expect(s.unknownRows).toEqual([]);
+    expect(s.committedUsd).toBe(0);
+    expect(s.amountAtRiskUsd).toBe(0);
   });
 });

@@ -10,11 +10,12 @@ import type { Mandate } from "@/lib/policy/policy";
 import { DecisionGrid } from "@/components/grid";
 import { RECORDED_RUN_HREF } from "@/components/site";
 import { AnimatedNumber, Badge, Button, Panel, StatusPill, buttonClasses, cx } from "@/components/ui";
-import { FIXTURE_REQUEST, fixtureEvents, fixturePages, fixtureState } from "./fixtures";
+import { actionError, runSettled, runStartError } from "./errors";
+import { FIXTURE_REQUEST, fixtureEvents, fixturePages, fixtureState, settleFixtureHold } from "./fixtures";
 import { markParts } from "./highlight";
 import { hasInjection, orderReasons, plainReason, reasonTags } from "./reasons";
 import { Trace } from "./Trace";
-import { ReasonLine, Tags, VerdictStack, usd } from "./Verdicts";
+import { ReasonLine, Tags, VerdictStack, paidUsd, usd } from "./Verdicts";
 import "./demo.css";
 
 type Mode = "live" | "redteam";
@@ -38,17 +39,8 @@ const PRESETS: { label: string; text: string }[] = [
   { label: "Earbuds", text: "Cheap wireless earbuds under $50" },
 ];
 const EMPTY: GuardState = { rows: [], pendingHolds: [], amountAtRiskUsd: 0, committedUsd: 0, unknownRows: [] };
-/** Nothing left that can change: no hold waiting on a human, no PayPal outcome still unresolved. */
-const settled = (g: GuardState) => g.pendingHolds.length === 0 && (g.unknownRows ?? []).length === 0;
 
 const slugFor = (merchant: string) => stores.find((s) => s.name.toLowerCase() === merchant.toLowerCase())?.slug;
-
-const RUN_ERRORS: Record<number, string> = {
-  403: "The server rejected this run (cross-site request).",
-  413: "That request is too long.",
-  415: "The server rejected the request format.",
-  429: "Too many runs right now. Wait a minute and try again.",
-};
 
 // Owner capability token for a run (POST /api/runs returns it once). Tab-scoped; storage can throw (privacy modes),
 // so the token also lives in React state and the run still works in this tab.
@@ -78,7 +70,8 @@ function Demo({ fixture }: { fixture: boolean }) {
   const [initialRun] = useState(() => (fixture ? null : params.get("run")));
   const [initialMode] = useState<Mode>(() => (!fixture && params.get("mode") === "live" ? "live" : "redteam"));
   // ?q= restores the run's request text after a refresh (FINDINGS-2 QA new 8).
-  const [request, setRequest] = useState(() => (fixture ? FIXTURE_REQUEST : (params.get("q")?.slice(0, MAX_Q) ?? PRESETS[1].text)));
+  // Default = the mug: in Simulated mode it is the scenario whose clean retry reaches a real PayPal sandbox hold.
+  const [request, setRequest] = useState(() => (fixture ? FIXTURE_REQUEST : (params.get("q")?.slice(0, MAX_Q) ?? PRESETS[0].text)));
   const [mode, setMode] = useState<Mode>(initialMode);
   /** Mode of the run on screen (the radio can change after the run starts). */
   const [runMode, setRunMode] = useState<Mode>(initialMode);
@@ -121,7 +114,7 @@ function Demo({ fixture }: { fixture: boolean }) {
     };
     es.onerror = () => {
       // The server closes the stream once the run is fully settled. That is the normal finish, not an error.
-      if (ended && settled(last)) return es.close();
+      if (ended && runSettled(last)) return es.close();
       if (es.readyState !== EventSource.CLOSED) return; // the browser retries on its own
       if (!gotAny) {
         // 404 (server restarted or evicted this run) or 429 (too many stream connections).
@@ -141,6 +134,15 @@ function Demo({ fixture }: { fixture: boolean }) {
     if (initialRun) connect(initialRun);
     return () => esRef.current?.close();
   }, [initialRun, connect]);
+
+  // The recording has no server to auto-void its hold, so it does it here at expiresAt, as the guard would.
+  useEffect(() => {
+    if (!fixture) return;
+    const timers = guard.rows
+      .filter((r) => r.status === "held" && r.expiresAt)
+      .map((r) => setTimeout(() => setGuard((g) => settleFixtureHold(g, r.id, "expire")), Math.max(0, Date.parse(r.expiresAt!) - Date.now())));
+    return () => timers.forEach(clearTimeout);
+  }, [fixture, guard.rows]);
 
   async function run() {
     if (startingRef.current) return;
@@ -166,11 +168,16 @@ function Demo({ fixture }: { fixture: boolean }) {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        const base = RUN_ERRORS[res.status] ?? `Run did not start (HTTP ${res.status}).`;
-        throw new Error(body.error ? `${base} ${body.error}` : base);
+        setPhase("error");
+        setError(runStartError(res.status, body.error));
+        return;
       }
       const { runId: id, ownerToken: token } = (await res.json()) as { runId: string; ownerToken: string };
-      if (!token) throw new Error("Run did not start.");
+      if (!token) {
+        setPhase("error");
+        setError("Run did not start. Try again.");
+        return;
+      }
       saveOwner(id, token);
       setOwnerToken(token);
       setRunId(id);
@@ -178,9 +185,9 @@ function Demo({ fixture }: { fixture: boolean }) {
       const q = new URLSearchParams({ run: id, mode, q: request.trim().slice(0, MAX_Q) });
       window.history.replaceState(null, "", `/demo?${q}`);
       connect(id);
-    } catch (e) {
+    } catch {
       setPhase("error");
-      setError((e as Error).message);
+      setError(`Run did not start. ${actionError()}`);
     } finally {
       startingRef.current = false;
     }
@@ -192,21 +199,11 @@ function Demo({ fixture }: { fixture: boolean }) {
     setBusy((b) => ({ ...b, [row.id]: true }));
     try {
       if (fixture) {
+        // A click that lands after expiresAt (before the expiry timer fires) voids, like the server's 409 + auto-void.
         setGuard((g) => {
-          const rows = g.rows.map((r) =>
-            r.id !== row.id
-              ? r
-              : action === "approve"
-                ? { ...r, status: "captured" as const, captureId: "9FX40112HD7731220", expiresAt: undefined, reasons: [...r.reasons, "approved by user"] }
-                : { ...r, status: "voided" as const, expiresAt: undefined, reasons: [...r.reasons, "rejected by user"] },
-          );
-          return {
-            ...g,
-            rows,
-            pendingHolds: g.pendingHolds.filter((id) => id !== row.id),
-            amountAtRiskUsd: g.amountAtRiskUsd - row.amountUsd,
-            committedUsd: action === "approve" ? g.committedUsd : g.committedUsd - row.amountUsd,
-          };
+          const cur = g.rows.find((r) => r.id === row.id);
+          const expired = !!cur?.expiresAt && Date.parse(cur.expiresAt) <= Date.now();
+          return settleFixtureHold(g, row.id, expired ? "expire" : action);
         });
         return;
       }
@@ -219,12 +216,13 @@ function Demo({ fixture }: { fixture: boolean }) {
       // 409 = hold already settled (auto-void, another tab, an earlier click). Not an error:
       // the open stream carries the real outcome.
       if (res.status === 409) return;
-      if (res.status === 429) throw new Error("too many clicks right now. Wait a minute and try again.");
+      const verb = action === "approve" ? "Approve" : "Reject";
+      if (res.status === 429) return setError(`${verb} failed: too many clicks right now. Wait a minute and try again.`);
       const body = (await res.json().catch(() => ({}))) as { state?: GuardState; error?: string };
-      if (!res.ok || !body.state) throw new Error(body.error ?? `HTTP ${res.status}`);
+      if (!res.ok || !body.state) return setError(`${verb} failed: ${actionError(res.status, body.error)}`);
       setGuard(body.state);
-    } catch (e) {
-      setError(`${action === "approve" ? "Approve" : "Reject"} failed: ${(e as Error).message}`);
+    } catch {
+      setError(`${action === "approve" ? "Approve" : "Reject"} failed: ${actionError()}`);
     } finally {
       decidingRef.current.delete(row.id);
       setBusy((b) => ({ ...b, [row.id]: false }));
@@ -287,7 +285,7 @@ function Demo({ fixture }: { fixture: boolean }) {
               </Panel>
             </div>
             <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:mt-10 lg:grid-cols-12 lg:gap-10">
-              <Trace events={events} phase={phase} mode={runMode} rows={guard.rows} className={cx("lg:col-span-7 lg:max-h-[calc(100dvh-10rem)]", show("trace"))} />
+              <Trace events={events} phase={phase} mode={runMode} rows={guard.rows} viewOnly={viewOnly} className={cx("lg:col-span-7 lg:max-h-[calc(100dvh-10rem)]", show("trace"))} />
               <div className={cx("lg:sticky lg:top-24 lg:col-span-5 lg:self-start", show("verdicts"))}>
                 <VerdictStack guard={guard} busy={busy} simulated={simulated} viewOnly={viewOnly} onDecide={decide} onReveal={openReveal} />
               </div>
@@ -302,7 +300,7 @@ function Demo({ fixture }: { fixture: boolean }) {
                 </Link>
               </div>
               {guard.rows.length ? (
-                <DecisionGrid rows={guard.rows} onSelect={openReveal} simulated={simulated} />
+                <DecisionGrid rows={guard.rows} onSelect={openReveal} />
               ) : (
                 <p className="rounded-lg border border-dashed border-line-strong px-4 py-8 text-center text-sm text-ink-faint">
                   Every payment the agent attempts lands here, allowed or not.
@@ -346,7 +344,7 @@ function RunBar(p: {
           ) : (
             <Badge tone="info">PayPal sandbox</Badge>
           )}
-          {p.simulated && <Badge tone="hold">Simulated compromised agent</Badge>}
+          {p.simulated ? <Badge tone="hold">Simulated compromised agent</Badge> : <Badge tone="neutral">Live Gemini agent</Badge>}
           {p.running && (
             <span className="inline-flex items-center gap-1.5 text-2xs text-ink-muted">
               <span aria-hidden className="size-1.5 animate-shimmer rounded-pill bg-paid" />
@@ -381,7 +379,7 @@ function RunBar(p: {
 
 function Kpis({ guard }: { guard: GuardState }) {
   const stopped = guard.rows.filter((r) => r.status === "blocked").reduce((s, r) => s + r.amountUsd, 0);
-  const captured = guard.committedUsd - guard.amountAtRiskUsd;
+  const captured = paidUsd(guard.rows);
   const pct = (n: number) => `${Math.max(0, Math.min(100, (n / MANDATE.budgetUsd) * 100))}%`;
   const autoPaid = guard.autoPaidUsd;
   const held = guard.amountAtRiskUsd > 0;
@@ -492,8 +490,8 @@ function Composer(p: {
   error: string | null;
 }) {
   const modes: { id: Mode; label: string; hint: string }[] = [
-    { id: "redteam", label: "Compromised agent", hint: "Simulated: a scripted agent that obeys the poisoned pages. Same real guard." },
-    { id: "live", label: "Live agent", hint: "Gemini shops for real against the PayPal sandbox." },
+    { id: "redteam", label: "Simulated", hint: "Simulated compromised agent: a script that obeys the poisoned pages. Same real guard." },
+    { id: "live", label: "Live Gemini", hint: "Live Gemini agent: shops for real against the PayPal sandbox." },
   ];
   const hint = modes.find((m) => m.id === p.mode)?.hint;
   const presets = (
@@ -554,11 +552,11 @@ function Composer(p: {
         <div className="space-y-3">
           <textarea
             id="req"
-            rows={p.compact ? 2 : 3}
+            rows={3}
             maxLength={MAX_Q}
             value={p.request}
             onChange={(e) => p.setRequest(e.target.value)}
-            className="w-full resize-none rounded-md border border-line bg-surface-2 px-3.5 py-3 text-base text-ink placeholder:text-ink-faint focus:border-hold/50 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-hold/40"
+            className="w-full min-h-20 resize-none rounded-md border field-sizing-content border-line bg-surface-2 px-3.5 py-3 text-base text-ink placeholder:text-ink-faint focus:border-hold/50 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-hold/40"
             placeholder="What should the agent buy?"
           />
           {presets}
@@ -691,7 +689,7 @@ function RevealDialog({ reveal, onClose }: { reveal: { row: DecisionRow; text: s
                 {showPage ? "The page told the agent what to buy" : "Why this payment was blocked"}
               </h2>
               <p className="mt-1 text-sm text-ink-muted">
-                {row.merchant} tried to charge <span className="figures text-ink">{usd(row.amountUsd)}</span> for {row.items}.
+                The agent tried to pay {row.merchant} <span className="figures text-ink">{usd(row.amountUsd)}</span> for {row.items}.
               </p>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose} autoFocus aria-label="Close">

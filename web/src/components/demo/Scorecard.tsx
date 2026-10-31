@@ -30,17 +30,19 @@ const OUTCOME: Record<Outcome, { word: string; cell: string; icon: typeof Check 
 
 const pretty = (id: string) => id.replace(/^(atk|ben)-/, "").replace(/-/g, " ");
 
-export default function Scorecard() {
-  const [card, setCard] = useState<Card | null>(null);
+/** initial: the same scoreCorpus() result /api/scorecard serves, computed at build time, so the server HTML has real numbers. */
+export default function Scorecard({ initial }: { initial?: Card } = {}) {
+  const [card, setCard] = useState<Card | null>(initial ?? null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
 
   useEffect(() => {
+    if (initial) return;
     fetch("/api/scorecard")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setCard)
       .catch((e: Error) => setError(`The scorecard did not load (${e.message}). Reload the page, or check that the API is running.`));
-  }, []);
+  }, [initial]);
 
   const attacks = useMemo(() => card?.rows.filter((r) => r.label === "attack").sort((a, b) => a.id.localeCompare(b.id)) ?? [], [card]);
   const benign = useMemo(() => card?.rows.filter((r) => r.label === "benign").sort((a, b) => a.id.localeCompare(b.id)) ?? [], [card]);
