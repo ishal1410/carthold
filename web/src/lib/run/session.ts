@@ -52,8 +52,8 @@ export type RunDeps = {
   resolveEveryMs?: number;
   /** Clock for the unresolvable-row TTL (default Date.now). */
   now?: () => number;
-  /** Crash recovery, once per process on the first createRun (default: lib/paypal/webhook sweepOrphanedHolds). */
-  sweepOrphans?: (o: { bootAt: number; isKnown: (authId: string) => boolean }) => Promise<unknown>;
+  /** Crash recovery: voids CartHold authorizations older than any live hold can be (default: lib/paypal/webhook sweepOrphanedHolds). */
+  sweepOrphans?: (o: { isKnown: (authId: string) => boolean }) => Promise<unknown>;
 };
 
 /** Thrown by createRun when every stored run is still running or has a pending hold. */
@@ -69,7 +69,7 @@ const defaultDeps: RunDeps = {
 };
 
 const g = globalThis as unknown as {
-  __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps; __cartholdShuttingDown?: boolean; __cartholdOrphanSweep?: boolean;
+  __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps; __cartholdShuttingDown?: boolean; __cartholdOrphanSweep?: number;
 };
 const runs = (g.__cartholdRuns ??= new Map());
 const MAX_RUNS = 100; // ponytail: in-memory, a real store if runs must outlive the process
@@ -87,21 +87,25 @@ export const resetRuns = () => {
   for (const r of runs.values()) clearInterval(r.resolveTimer);
   runs.clear();
   g.__cartholdShuttingDown = false;
-  g.__cartholdOrphanSweep = false;
+  g.__cartholdOrphanSweep = 0;
 }; // test seam
 
 /**
  * Holds live only in memory, so a crash / OOM orphans them. On the first run of a new process, void CartHold
- * authorizations made before this process booted that no run knows (sweepOrphanedHolds reads PayPal's event log).
- * ponytail: triggered by the first run, not at boot (instrumentation stays free of server-only PayPal imports), so
- * an orphan waits for the next visitor; a boot hook in instrumentation-node.ts would close that gap.
+ * authorizations older than MAX_HOLD_LIFETIME_MS that no run knows (sweepOrphanedHolds reads PayPal's event log).
+ * Age-based, not boot-based: an instance killed mid-deploy leaves holds younger than the new instance's boot.
  */
-function kickOrphanSweep(d: RunDeps) {
-  if (g.__cartholdOrphanSweep || !d.sweepOrphans) return;
-  g.__cartholdOrphanSweep = true;
-  const bootAt = Date.now() - process.uptime() * 1000;
+export const ORPHAN_SWEEP_EVERY_MS = 5 * 60_000;
+
+function kickOrphanSweep(d: RunDeps, now = Date.now()) {
+  // ponytail: at most every ORPHAN_SWEEP_EVERY_MS, driven by new runs plus an unref'd interval while the process lives
+  // (a free instance that sleeps is swept on its next wake). Upgrade path: a cron (Render Workflows) if traffic is nil.
+  if (!d.sweepOrphans || now - (g.__cartholdOrphanSweep ?? 0) < ORPHAN_SWEEP_EVERY_MS) return;
+  const first = !g.__cartholdOrphanSweep;
+  g.__cartholdOrphanSweep = now;
   const isKnown = (authId: string) => [...runs.values()].some((r: Run) => r.guard.getState().rows.some((row) => row.authorizationId === authId));
-  void d.sweepOrphans({ bootAt, isKnown }).catch((e) => console.error("orphaned-hold sweep failed:", e));
+  void d.sweepOrphans({ isKnown }).catch((e) => console.error("orphaned-hold sweep failed:", e));
+  if (first) setInterval(() => kickOrphanSweep(deps()), ORPHAN_SWEEP_EVERY_MS).unref?.();
 }
 
 const unknownRowIds = (state: GuardState) => state.rows.filter((r) => r.status === "unknown").map((r) => r.id);

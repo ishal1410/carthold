@@ -28,9 +28,9 @@ check "local paths"   "[A-Za-z]:[\\/]+Users|App[D]ata${USERNAME:+|$USERNAME}${US
 check "private keys"  '-----BEGIN [A-Z ]*PRIVATE KEY'     ''
 check "api keys"      'AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}|A21AA[A-Za-z0-9_-]{20,}' ''
 check "secret values" '(SECRET|API_KEY|CLIENT_ID|TOKEN|PASSWORD)[A-Z_]*[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_\-]{16,}' ''
-# emails: allow placeholder/no-reply domains, plus the fictional attacker address in web/src/data/attacks/corpus.json
+# emails: allow placeholder/no-reply domains (incl. PayPal sandbox test accounts on *.example.com), plus the fictional attacker address in web/src/data/attacks/corpus.json
 emails=$(grep -rnIoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$OUT" \
-  | grep -viE '@(example\.(com|org|net)|users\.noreply\.github\.com|noreply\.|giftlane-deals\.biz)' || true)
+  | grep -viE '@(([a-z0-9-]+\.)?example\.(com|org|net)|users\.noreply\.github\.com|noreply\.|giftlane-deals\.biz)' || true)
 if [ -n "$emails" ]; then echo "FAIL emails:"; echo "$emails" | head -20; fail=1; else echo "ok   emails"; fi
 envs=$(find "$OUT" -name '.env*' ! -name '.env.example')
 if [ -n "$envs" ]; then echo "FAIL .env files:"; echo "$envs"; fail=1; else echo "ok   .env files"; fi

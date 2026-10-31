@@ -217,16 +217,16 @@ describe("sweepOrphanedHolds (crash recovery from PayPal's own event log)", () =
           });
       }
       const m = /^\/v2\/checkout\/orders\/(O\d)$/.exec(path);
-      if (m) return Response.json({ O1: order("O1", "A1", "CREATED"), O2: order("O2", "A2", "VOIDED"), O3: order("O3", "A3", "CREATED", "someone else's shop"), O5: order("O5", "A5", "CREATED"), O6: order("O6", "A6", "CREATED") }[m[1]]);
+      if (m) return Response.json({ O1: order("O1", "A1", "CREATED"), O2: order("O2", "A2", "VOIDED"), O3: order("O3", "A3", "CREATED", "someone else's shop"), O4: order("O4", "A4", "CREATED"), O5: order("O5", "A5", "CREATED"), O6: order("O6", "A6", "CREATED") }[m[1]]);
       if (/^\/v2\/payments\/authorizations\/A\d\/void$/.test(path)) return new Response(null, { status: 204 });
       throw new Error(`unexpected ${url}`);
     }));
     return calls;
   }
 
-  it("voids only CartHold authorizations still CREATED, authorized before this process booted, unknown to any run", async () => {
+  it("voids only CartHold authorizations still CREATED, older than any live hold can be, unknown to any run", async () => {
     const calls = stub();
-    const voided = await sweepOrphanedHolds({ bootAt: BOOT, isKnown: (a) => a === "A5", now: BOOT + 60_000 });
+    const voided = await sweepOrphanedHolds({ isKnown: (a) => a === "A5", now: BOOT + 60_000 });
     expect(voided).toEqual(["A1"]);
     expect(calls.filter((c) => c.endsWith("/void"))).toEqual(["POST /v2/payments/authorizations/A1/void"]);
     const list = calls.find((c) => c.startsWith("GET /v1/notifications/webhooks-events"))!;
@@ -236,12 +236,20 @@ describe("sweepOrphanedHolds (crash recovery from PayPal's own event log)", () =
     // M1: A6 is 5 min before boot, younger than the max hold lifetime: maybe a live hold of another instance
     // (zero-downtime deploy overlap) or a local dev run. Never voided, never even looked up.
     expect(calls).not.toContain("GET /v2/checkout/orders/O6");
-    expect(list).toContain(`end_time=${encodeURIComponent(new Date(BOOT - MAX_HOLD_LIFETIME_MS - 60_000).toISOString())}`);
+    expect(list).toContain(`end_time=${encodeURIComponent(new Date(BOOT + 60_000 - MAX_HOLD_LIFETIME_MS - 60_000).toISOString())}`);
     expect(calls).toContain("GET /v1/notifications/webhooks-events?page=2"); // followed links rel=next
+  });
+
+  it("live incident 2026-10-31: a hold made by an instance killed mid-deploy is voided once it is older than the max lifetime, even though it is younger than this process", async () => {
+    const calls = stub();
+    // A4 was authorized 5 s AFTER this process booted (the old instance was still serving during the deploy overlap).
+    const voided = await sweepOrphanedHolds({ isKnown: () => false, now: Date.parse("2026-10-31T12:00:05Z") + MAX_HOLD_LIFETIME_MS + 61_000 });
+    expect(voided).toContain("A4");
+    expect(calls).toContain("POST /v2/payments/authorizations/A4/void");
   });
 
   it("never throws: a PayPal failure just ends the sweep", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
-    await expect(sweepOrphanedHolds({ bootAt: BOOT, isKnown: () => false })).resolves.toEqual([]);
+    await expect(sweepOrphanedHolds({ isKnown: () => false })).resolves.toEqual([]);
   });
 });

@@ -99,9 +99,11 @@ type RawOrder = { purchase_units?: { description?: string; payments?: { authoriz
  * hold of another instance (Render zero-downtime deploy overlap) or a local dev run on the same sandbox app. Window is 30 days (an authorization is valid 29). Best effort: never throws; returns the voided ids.
  * ponytail: 10 pages max and serial calls; enough for a demo app's volume, page further if that ever falls short.
  */
-export async function sweepOrphanedHolds(o: { bootAt: number; isKnown: (authId: string) => boolean; now?: number }): Promise<string[]> {
+export async function sweepOrphanedHolds(o: { isKnown: (authId: string) => boolean; now?: number }): Promise<string[]> {
   const voided: string[] = [];
-  const cutoff = o.bootAt - MAX_HOLD_LIFETIME_MS - ORPHAN_MARGIN_MS;
+  // No live hold can outlive MAX_HOLD_LIFETIME_MS (awaiting + held windows), in this process or any other, so an
+  // older CartHold authorization still CREATED is orphaned whoever made it (e.g. an instance killed mid-deploy).
+  const cutoff = (o.now ?? Date.now()) - MAX_HOLD_LIFETIME_MS - ORPHAN_MARGIN_MS;
   const q = new URLSearchParams({
     event_type: "PAYMENT.AUTHORIZATION.CREATED",
     start_time: new Date((o.now ?? Date.now()) - 30 * DAY).toISOString(),
@@ -129,7 +131,7 @@ export async function sweepOrphanedHolds(o: { bootAt: number; isKnown: (authId: 
   } catch (e) {
     console.error("[carthold] orphaned-hold sweep stopped:", e);
   }
-  if (voided.length) console.error(`[carthold] voided ${voided.length} orphaned hold(s) from before boot: ${voided.join(", ")}`);
+  if (voided.length) console.error(`[carthold] voided ${voided.length} orphaned hold(s): ${voided.join(", ")}`);
   return voided;
 }
 

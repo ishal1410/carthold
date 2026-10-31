@@ -1071,8 +1071,7 @@ describe("orphaned-hold sweep (crash recovery)", () => {
     await waitEnd(runId);
     await startRun();
     expect(sweepOrphans).toHaveBeenCalledTimes(1);
-    const { isKnown, bootAt } = (sweepOrphans.mock.calls[0] as unknown as [{ isKnown: (a: string) => boolean; bootAt: number }])[0];
-    expect(bootAt).toBeLessThanOrEqual(Date.now());
+    const { isKnown } = (sweepOrphans.mock.calls[0] as unknown as [{ isKnown: (a: string) => boolean }])[0];
     expect(isKnown("A1")).toBe(true);
     expect(isKnown("NOPE")).toBe(false);
   });
