@@ -110,7 +110,15 @@ function CountdownRing({ left }: { left: number }) {
 type Decide = (row: DecisionRow, a: "approve" | "reject") => void;
 
 /** The open hold: the one thing on this screen that needs a human. */
-function HoldCard({ row, now, busy, simulated, onDecide }: { row: DecisionRow; now: number; busy: boolean; simulated: boolean; onDecide: Decide }) {
+function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
+  row: DecisionRow;
+  now: number;
+  busy: boolean;
+  simulated: boolean;
+  /** Opened from a shared link: only the tab that started the run holds the owner token. */
+  viewOnly: boolean;
+  onDecide: Decide;
+}) {
   const reduce = useReducedMotion();
   const left = row.expiresAt && now ? Math.max(0, new Date(row.expiresAt).getTime() - now) : HOLD_MS;
   const why = reasonTags(row.reasons);
@@ -148,16 +156,21 @@ function HoldCard({ row, now, busy, simulated, onDecide }: { row: DecisionRow; n
           <Warnings reasons={row.reasons} />
         </div>
         <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <Button variant="approve" size="lg" icon={<Check strokeWidth={2} />} loading={busy} onClick={() => onDecide(row, "approve")}>
+          <Button variant="approve" size="lg" icon={<Check strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "approve")}>
             {busy ? "Working" : `Approve ${usd(row.amountUsd)}`}
           </Button>
-          <Button variant="ghost" size="lg" disabled={busy} onClick={() => onDecide(row, "reject")} className="max-sm:px-4">
+          <Button variant="ghost" size="lg" disabled={busy || viewOnly} onClick={() => onDecide(row, "reject")} className="max-sm:px-4">
             <span className="inline-flex items-center gap-1.5">
               <X aria-hidden strokeWidth={1.75} className="size-4" />
               Reject
             </span>
           </Button>
         </div>
+        {viewOnly && (
+          <p className="mt-2 text-sm text-ink">
+            View only. Only the tab that started this run can approve or reject it.
+          </p>
+        )}
         <Receipt row={row} className="mt-4" />
       </Panel>
     </Reveal>
@@ -283,10 +296,11 @@ function VerdictChip({ row, simulated, onReveal }: { row: DecisionRow; simulated
   );
 }
 
-export function VerdictStack({ guard, busy, simulated, onDecide, onReveal }: {
+export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecide, onReveal }: {
   guard: GuardState;
   busy: Record<string, boolean>;
   simulated: boolean;
+  viewOnly?: boolean;
   onDecide: Decide;
   onReveal: (row: DecisionRow) => void;
 }) {
@@ -309,7 +323,7 @@ export function VerdictStack({ guard, busy, simulated, onDecide, onReveal }: {
         {live.map((r) => (
           <li key={r.id}>
             {r.status === "held" ? (
-              <HoldCard row={r} now={now} busy={!!busy[r.id]} simulated={simulated} onDecide={onDecide} />
+              <HoldCard row={r} now={now} busy={!!busy[r.id]} simulated={simulated} viewOnly={viewOnly} onDecide={onDecide} />
             ) : (
               <PendingCard row={r} simulated={simulated} />
             )}

@@ -24,6 +24,7 @@ Shoppers don't trust agents with their wallets yet. In Nuvei's survey, 61% want 
 2. **Page inspection.** The inspector (`web/src/lib/inspector`) reads the store pages the agent actually read, including hidden text, alt text and comments. A regex backstop always runs; Gemini Flash-Lite adds a second opinion when `GEMINI_API_KEY` is set. If the order follows text aimed at AI agents, the order is blocked and the UI highlights the sentence. A flagged page that the order does not follow only adds an amber warning.
 3. **PayPal authorize or hold.** An order that passes (Allow or Hold) is created with Orders v2 `intent=AUTHORIZE` and a sandbox card, then authorized. The funds are held, not taken.
 4. **Capture or void.** Under the auto-pay limit, CartHold captures at once. Over it, the authorization waits for you: Approve calls Payments v2 capture, Reject (or the 5-minute timeout) calls void.
+   Only the browser tab that started the run can approve or reject: the server hands that tab a secret per-run owner token (it keeps only a SHA-256 hash) and checks it on every decision. Anyone else who opens the run link sees it read-only.
 
 Every decision lands in an AG Grid decision log with the PayPal order, authorization and capture ids.
 

@@ -15,7 +15,8 @@ export async function POST(req: Request) {
   if (parsed.data.mode === "live" && !takeLiveSlot())
     return fail(429, "daily live run limit reached, try the Simulated compromised agent or come back tomorrow");
   try {
-    return json({ runId: createRun(parsed.data).id }, 201);
+    const { run, ownerToken } = createRun(parsed.data);
+    return json({ runId: run.id, ownerToken }, 201);
   } catch (e) {
     if (e instanceof RunsFullError) return fail(503, e.message);
     throw e;

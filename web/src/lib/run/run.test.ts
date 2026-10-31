@@ -51,10 +51,17 @@ const post = (body: unknown, headers: Record<string, string> = {}) =>
 const MUG = { userRequest: "Buy me a ceramic pour-over cone under $50", mode: "live" };
 const params = <T,>(p: T) => ({ params: Promise.resolve(p) });
 
+/** ownerToken per runId, returned once by POST /api/runs. */
+const tokens = new Map<string, string>();
+const auth = (runId: string): Record<string, string> =>
+  tokens.has(runId) ? { authorization: `Bearer ${tokens.get(runId)}` } : {};
+
 async function startRun(body: unknown = MUG) {
   const res = await createRunRoute(post(body));
   expect(res.status).toBe(201);
-  return ((await res.json()) as { runId: string }).runId;
+  const { runId, ownerToken } = (await res.json()) as { runId: string; ownerToken: string };
+  tokens.set(runId, ownerToken);
+  return runId;
 }
 
 /** Reads SSE messages until `until` matches, then aborts the request. */
@@ -169,7 +176,7 @@ describe("run eviction", () => {
 
     // Once the hold is decided, the ended run becomes evictable; the running one is still kept.
     await holdRoute(
-      new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: '{"action":"reject"}' }),
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(held) }, body: '{"action":"reject"}' }),
       params({ runId: held, rowId: holdId(await waitEnd(held)) }),
     );
     const next = await startRun();
@@ -207,7 +214,7 @@ describe("GET /api/runs/:runId/stream", () => {
 describe("POST /api/runs/:runId/holds/:rowId", () => {
   const act = (runId: string, rowId: string, body: unknown, headers: Record<string, string> = {}) =>
     holdRoute(
-      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }),
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(runId), ...headers }, body: JSON.stringify(body) }),
       params({ runId, rowId }),
     );
 
@@ -215,8 +222,17 @@ describe("POST /api/runs/:runId/holds/:rowId", () => {
     const runId = await startRun();
     const rowId = holdId(await waitEnd(runId));
     expect((await act(runId, rowId, { action: "approve" }, { "content-type": "text/plain" })).status).toBe(415);
-    expect((await act(runId, rowId, { action: "approve" }, { origin: "https://evil.example" })).status).toBe(403);
+    const cross = await act(runId, rowId, { action: "approve" }, { origin: "https://evil.example" });
+    expect(cross.status).toBe(403);
+    expect((await cross.json()).error).toBe("cross-origin request refused"); // the origin check, not the owner gate
     expect(pp.captureAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("non-owner gets 403 before body validation", async () => {
+    const runId = await startRun();
+    const rowId = holdId(await waitEnd(runId));
+    const res = await act(runId, rowId, { action: "capture" }, { authorization: "" });
+    expect(res.status).toBe(403);
   });
 
   it("approve captures, then a second decision is 409", async () => {
@@ -237,6 +253,60 @@ describe("POST /api/runs/:runId/holds/:rowId", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).state.rows[0].status).toBe("voided");
     expect(vi.mocked(pp.voidAuthorization).mock.calls[0][0]).toBe("A1");
+  });
+
+  it("403 without the owner token, with a wrong one, or with another run's; unknown run stays 404", async () => {
+    const runId = await startRun();
+    const rowId = holdId(await waitEnd(runId));
+    const other = await startRun();
+    await waitEnd(other);
+    const forbidden = /only the person who started this run/;
+    for (const headers of [
+      { authorization: "" },
+      { authorization: "Bearer " },
+      { authorization: "Bearer not-the-token" },
+      { authorization: `Basic ${tokens.get(runId)}` },
+      { authorization: `Bearer ${tokens.get(runId)}x` },
+      auth(other),
+    ]) {
+      const res = await act(runId, rowId, { action: "approve" }, headers);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(forbidden);
+    }
+    // No authorization header at all.
+    const bare = await holdRoute(
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: '{"action":"approve"}' }),
+      params({ runId, rowId }),
+    );
+    expect(bare.status).toBe(403);
+    // A valid token for some run never turns an unknown run into anything but 404.
+    expect((await act("nope", rowId, { action: "approve" }, auth(runId))).status).toBe(404);
+    expect((await act("nope", rowId, { action: "approve" }, { authorization: "" })).status).toBe(404);
+    expect(pp.captureAuthorization).not.toHaveBeenCalled();
+    expect(getRun(runId)!.guard.getState().pendingHolds).toEqual([rowId]);
+    // The right token still works afterwards.
+    const ok = await act(runId, rowId, { action: "approve" });
+    expect(ok.status).toBe(200);
+    expect(pp.captureAuthorization).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST /api/runs returns a fresh ownerToken; neither it nor its hash is ever serialized", async () => {
+    const runId = await startRun();
+    const token = tokens.get(runId)!;
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes, base64url
+    const second = await startRun();
+    expect(tokens.get(second)).not.toBe(token);
+    const run = getRun(runId)!;
+    const hash = Object.values(run).find((v) => Buffer.isBuffer(v)) as Buffer | undefined;
+    expect(hash?.length).toBe(32); // sha256 digest stored, not the token
+    expect(JSON.stringify(run)).not.toContain(token);
+    const msgs = await waitEnd(runId);
+    const rowId = holdId(msgs);
+    const res = await act(runId, rowId, { action: "reject" });
+    const leaked = [token, hash!.toString("hex"), hash!.toString("base64"), hash!.toString("base64url")];
+    for (const blob of [JSON.stringify(msgs), JSON.stringify(run.guard.getState()), JSON.stringify(run.messages), await res.text()])
+      for (const secret of leaked) expect(blob).not.toContain(secret);
+    expect(Object.values(run).some((v) => typeof v === "string" && v === token)).toBe(false);
   });
 
   it("404 unknown run, 409 unknown row, 400 bad action", async () => {
@@ -269,7 +339,7 @@ describe("read-only routes", () => {
 describe("R2 hardening", () => {
   const holdAct = (runId: string, rowId: string, action: string, headers: Record<string, string> = {}) =>
     holdRoute(
-      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ action }) }),
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(runId), ...headers }, body: JSON.stringify({ action }) }),
       params({ runId, rowId }),
     );
 
@@ -353,7 +423,7 @@ describe("R2 hardening", () => {
       onEvent({ type: "done", reason: "final_answer", text: "ok" });
     };
     setRunDeps({ runners: { live: runner, redteam: runner }, guard: { llm: cleanLlm, paypal: pp } });
-    const run = createRun({ userRequest: "mug", mode: "live" });
+    const { run } = createRun({ userRequest: "mug", mode: "live" });
     await new Promise((r) => setTimeout(r, 0));
     const good: StreamMsg[] = [];
     subscribeRun(run, () => {
@@ -489,7 +559,7 @@ describe("R2 hardening", () => {
 
 describe("R4 #3: limiter lockout", () => {
   const holdReq = (runId: string, headers: Record<string, string>, body = JSON.stringify({ action: "approve" })) =>
-    holdRoute(new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...headers }, body }), params({ runId, rowId: "d99" }));
+    holdRoute(new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(runId), ...headers }, body }), params({ runId, rowId: "d99" }));
 
   it("10k invalid POST /api/runs from distinct IPs do not fill the window map", async () => {
     for (let i = 0; i < 10_050; i++) {
@@ -529,6 +599,14 @@ describe("R4 #3: limiter lockout", () => {
       expect((await holdReq(runId, { ...ip, "content-type": "text/plain" })).status).toBe(415);
       expect((await holdReq(runId, { ...ip, origin: "https://evil.example" })).status).toBe(403);
     }
+    expect((await holdReq(runId, ip)).status).toBe(409);
+  });
+
+  it("token-less hold POSTs (shared-link viewers on the owner's IP) do not consume the owner's hold slots", async () => {
+    const runId = await startRun();
+    await waitEnd(runId);
+    const ip = { "x-forwarded-for": "3.3.3.8" };
+    for (let i = 0; i < 40; i++) expect((await holdReq(runId, { ...ip, authorization: "" })).status).toBe(403);
     expect((await holdReq(runId, ip)).status).toBe(409);
   });
 });

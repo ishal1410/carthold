@@ -1,5 +1,6 @@
 // In-memory run registry: one guard + one agent run per runId, with a message log for SSE replay.
 // Lives on globalThis so dev HMR doesn't drop runs (and their pending holds) mid-demo.
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { runAgent, type AgentEvent, type RunAgentOptions } from "../agent/agent";
 import { createGuard, type Guard, type GuardOptions, type GuardState } from "../guard/guard";
@@ -33,6 +34,8 @@ export type Run = {
   messages: StreamMsg[];
   listeners: Set<(m: StreamMsg) => void>;
   ended: boolean;
+  /** sha256 of the owner capability token (only the creator may decide holds). Never serialized or streamed. */
+  ownerHash: Buffer;
   /** When the agent run finished (deps.now clock); starts the unresolvable-row TTL. */
   endedAt?: number;
   /** Polls guard.resolveUnknown while the run has "unknown" rows (R2-D). */
@@ -152,13 +155,26 @@ const summarize = (m: Mandate) =>
   `budget $${m.budgetUsd}, max $${m.perItemCapUsd} per item, auto-pay up to $${m.approvalThresholdUsd} in total per run; anything beyond waits for approval, ` +
   `max quantity ${m.maxQuantity}, allowed merchants: ${m.merchantAllowlist.join(", ")}`;
 
-/** Input must already be validated with CreateRunSchema. Starts the run in the background. */
-export function createRun(input: CreateRunInput): Run {
+const sha256 = (s: string) => createHash("sha256").update(s).digest();
+
+/** True only for the token createRun returned for this run. Constant-time over equal-length digests. */
+export function isOwner(run: Run, token: string | null | undefined): boolean {
+  return !!token && timingSafeEqual(sha256(token), run.ownerHash);
+}
+
+/**
+ * Input must already be validated with CreateRunSchema. Starts the run in the background.
+ * ownerToken is returned exactly once; the run keeps only its sha256.
+ */
+export function createRun(input: CreateRunInput): { run: Run; ownerToken: string } {
   const d = deps();
   if (runs.size >= (d.maxRuns ?? MAX_RUNS) && !evictOne()) throw new RunsFullError();
   const mandate: Mandate = { ...DEFAULT_MANDATE, userRequest: input.userRequest };
   const guard = createGuard({ mandate, ...d.guard });
-  const run: Run = { id: crypto.randomUUID(), mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false };
+  const ownerToken = randomBytes(32).toString("base64url");
+  const run: Run = {
+    id: crypto.randomUUID(), mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken),
+  };
   runs.set(run.id, run);
   // Feature-detected: guard.notePageRead lands with the guard's page-provenance fix (FINDINGS #2).
   const notePageRead = (guard as { notePageRead?: (slug: string) => void }).notePageRead;
@@ -186,7 +202,7 @@ export function createRun(input: CreateRunInput): Run {
       run.endedAt = now();
       push(run, { kind: "end" });
     });
-  return run;
+  return { run, ownerToken };
 }
 
 /** Replays history, then the current guard state, then live messages. Returns unsubscribe. */

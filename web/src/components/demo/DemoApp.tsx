@@ -50,6 +50,22 @@ const RUN_ERRORS: Record<number, string> = {
   429: "Too many runs right now. Wait a minute and try again.",
 };
 
+// Owner capability token for a run (POST /api/runs returns it once). Tab-scoped; storage can throw (privacy modes),
+// so the token also lives in React state and the run still works in this tab.
+const ownerKey = (id: string) => `carthold:owner:${id}`;
+function loadOwner(id: string): string | null {
+  try {
+    return sessionStorage.getItem(ownerKey(id));
+  } catch {
+    return null;
+  }
+}
+function saveOwner(id: string, token: string) {
+  try {
+    sessionStorage.setItem(ownerKey(id), token);
+  } catch {}
+}
+
 /** Keyed on ?fixture so a client-side hop between /demo and the recording starts from fresh state. */
 export default function DemoApp() {
   const fixture = useSearchParams().get("fixture") === "1";
@@ -69,6 +85,9 @@ function Demo({ fixture }: { fixture: boolean }) {
   const [phase, setPhase] = useState<Phase>(fixture ? "done" : initialRun ? "running" : "idle");
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(fixture ? "fixture" : initialRun);
+  /** Bearer token proving this tab started the run. Null for a shared link: the holds are view only. */
+  // /demo is static and this sits below Suspense + useSearchParams, so it renders on the client; hold rows only arrive over SSE after hydration, so viewOnly never mismatches. loadOwner swallows a missing sessionStorage.
+  const [ownerToken, setOwnerToken] = useState<string | null>(() => (initialRun ? loadOwner(initialRun) : null));
   const [events, setEvents] = useState<AgentEvent[]>(() => (fixture ? fixtureEvents() : []));
   const [guard, setGuard] = useState<GuardState>(() => (fixture ? fixtureState() : EMPTY));
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -108,6 +127,7 @@ function Demo({ fixture }: { fixture: boolean }) {
         // 404 (server restarted or evicted this run) or 429 (too many stream connections).
         window.history.replaceState(null, "", "/demo");
         setRunId(null);
+        setOwnerToken(null);
         setPhase("idle");
         setError("Could not reopen that run: it is no longer on the server, or too many tabs are watching it. Wait a minute, then start a new run.");
       } else {
@@ -149,7 +169,10 @@ function Demo({ fixture }: { fixture: boolean }) {
         const base = RUN_ERRORS[res.status] ?? `Run did not start (HTTP ${res.status}).`;
         throw new Error(body.error ? `${base} ${body.error}` : base);
       }
-      const { runId: id } = (await res.json()) as { runId: string };
+      const { runId: id, ownerToken: token } = (await res.json()) as { runId: string; ownerToken: string };
+      if (!token) throw new Error("Run did not start.");
+      saveOwner(id, token);
+      setOwnerToken(token);
       setRunId(id);
       setPhase("running");
       const q = new URLSearchParams({ run: id, mode, q: request.trim().slice(0, MAX_Q) });
@@ -187,9 +210,10 @@ function Demo({ fixture }: { fixture: boolean }) {
         });
         return;
       }
+      if (!ownerToken) return; // view-only tab: buttons are disabled, never send "Bearer null"
       const res = await fetch(`/api/runs/${runId}/holds/${row.id}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${ownerToken}` },
         body: JSON.stringify({ action }),
       });
       // 409 = hold already settled (auto-void, another tab, an earlier click). Not an error:
@@ -227,6 +251,8 @@ function Demo({ fixture }: { fixture: boolean }) {
   // A dashboard only once there is something to show; before that, the composer and a preview.
   const hasRun = running || events.length > 0 || guard.rows.length > 0;
   const simulated = runMode === "redteam";
+  // The recording makes no API calls, so it is always decidable; a shared live link without the token is not.
+  const viewOnly = !fixture && !ownerToken;
   const composer = (compact: boolean) => (
     <Composer
       compact={compact}
@@ -263,7 +289,7 @@ function Demo({ fixture }: { fixture: boolean }) {
             <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:mt-10 lg:grid-cols-12 lg:gap-10">
               <Trace events={events} phase={phase} mode={runMode} rows={guard.rows} className={cx("lg:col-span-7 lg:max-h-[calc(100dvh-10rem)]", show("trace"))} />
               <div className={cx("lg:sticky lg:top-24 lg:col-span-5 lg:self-start", show("verdicts"))}>
-                <VerdictStack guard={guard} busy={busy} simulated={simulated} onDecide={decide} onReveal={openReveal} />
+                <VerdictStack guard={guard} busy={busy} simulated={simulated} viewOnly={viewOnly} onDecide={decide} onReveal={openReveal} />
               </div>
             </div>
             <section aria-labelledby="log-h" className={cx("mt-6 min-w-0 lg:mt-16", show("log"))}>
