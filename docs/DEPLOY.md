@@ -35,9 +35,17 @@ git push -u origin main
    - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`: sandbox app at https://developer.paypal.com/dashboard/applications/sandbox
    - `GEMINI_API_KEY`: https://aistudio.google.com/apikey
    - `PUBLIC_ORIGIN`: leave it empty for now.
+   - `PAYPAL_WEBHOOK_ID`: the id printed in step 5. Leave it empty if you have not registered yet.
 
    These values are set by the Blueprint: `PAYPAL_ENVIRONMENT=SANDBOX`, `CLIENT_IP_HEADER=true-client-ip`, `TRUSTED_PROXY_HOPS=1`,
-   `LIVE_RUNS_PER_DAY=60`, `SIMULATED_RUNS_PER_DAY=200`.
+   `LIVE_RUNS_PER_DAY=60`, `SIMULATED_RUNS_PER_DAY=200`, `PAYPAL_HOLD_PAYER=paypal`.
+
+   `PAYPAL_HOLD_PAYER` picks how a held order is paid. `paypal` (the default): CartHold creates the order with
+   `payment_source.paypal`, the buyer approves it in PayPal (a popup), PayPal sends them back to
+   `PUBLIC_ORIGIN/demo/paypal-return`, and CartHold then authorizes it. `card`: holds are paid by the sandbox test card
+   with no buyer step, as before. If sandbox buyer approval breaks during judging, set it to `card` on the
+   **Environment** page and save; Render redeploys and new runs use the card. Runs already in memory keep their mode.
+   The PayPal return URL is built from `PUBLIC_ORIGIN` (or the request origin when it is unset), so set step 4 first.
 
    `CLIENT_IP_HEADER=true-client-ip` is required on Render. Cloudflare sits in front of Render and sets `True-Client-IP`
    to the real client address. Render only appends to `X-Forwarded-For`, so a value the client sent survives there
@@ -47,6 +55,18 @@ git push -u origin main
    (Render adds a suffix if that name is taken).
 4. Open the service's **Environment** page, set `PUBLIC_ORIGIN` to that exact URL (https, no trailing slash) and save.
    Render redeploys. After that, POST routes accept only browser requests whose Origin equals this value.
+5. **PayPal webhook.** From `web/`, register the webhook once (it lists the app's webhooks and creates one only if none
+   points at `https://carthold.onrender.com/api/paypal/webhook`):
+
+   ```bash
+   npx -y tsx --conditions=react-server scripts/paypal-webhook-register.mts
+   ```
+
+   It prints the webhook id. Set `PAYPAL_WEBHOOK_ID` to it on the service's **Environment** page and save (Render
+   redeploys). Until it is set, `POST /api/paypal/webhook` answers `503 webhooks not configured` and applies nothing.
+   Every event is checked with PayPal's `verify-webhook-signature` before CartHold acts on it. Events handled:
+   `PAYMENT.AUTHORIZATION.CREATED`, `PAYMENT.AUTHORIZATION.VOIDED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`
+   (v1 name) and `PAYMENT.CAPTURE.DECLINED` (v2 name). To undo: add `--delete <WEBHOOK_ID>` to the same command.
 
 ### Verify
 
@@ -85,6 +105,11 @@ Finally, open the site in a browser and run one **live** run end to end.
   to the recorded run at `/demo?fixture=1`. The counter is held in memory, so it resets when the service
   sleeps or redeploys. Lower the value if your Gemini free-tier quota is tight.
 - **Single instance.** The rate limits are in-process, so keep the service at one instance.
+- **Holds after a crash.** Holds and their timers live in memory. SIGTERM (redeploy, spin-down) voids them. After a crash or
+  OOM restart, the first run of the new process voids any CartHold authorization made before the boot that is still
+  `CREATED`. It finds them in PayPal's own webhook event log (`GET /v1/notifications/webhooks-events`), so the webhook from
+  step 5 must be registered. No database or extra service is needed. Until someone starts a run, an orphaned hold stays open.
+  PayPal's own expiry is the last backstop.
 - **Rollback.** In the Render dashboard, open **Events**, pick a previous deploy and choose **Rollback**. To take the app offline,
   open **Settings** and choose **Suspend**.
 - **Rotating keys.** Change the value on the **Environment** page and Render redeploys. Never commit `.env.local`.

@@ -10,9 +10,10 @@ import { readJsonPost } from "./http";
 import { runRedteam } from "../redteam/redteam";
 import { POST as createRunRoute } from "../../app/api/runs/route";
 import { GET as streamRoute } from "../../app/api/runs/[runId]/stream/route";
-import { POST as holdRoute } from "../../app/api/runs/[runId]/holds/[rowId]/route";
+import { GET as payerUrlRoute, POST as holdRoute } from "../../app/api/runs/[runId]/holds/[rowId]/route";
 import { GET as scorecardRoute } from "../../app/api/scorecard/route";
 import { GET as storeTextRoute } from "../../app/api/stores/[slug]/text/route";
+import { POST as webhookRoute } from "../../app/api/paypal/webhook/route";
 
 const cleanLlm = async () => JSON.stringify({ flagged: false, quote: null, reason: "ok" });
 const paypal = (): PayPalApi =>
@@ -361,6 +362,138 @@ describe("POST /api/runs/:runId/holds/:rowId", () => {
     expect((await act("nope", "d1", { action: "approve" })).status).toBe(404);
     expect((await act(runId, "d99", { action: "approve" })).status).toBe(409);
     expect((await act(runId, "d1", { action: "capture" })).status).toBe(400);
+  });
+});
+
+describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
+  const PAYER_URL = "https://www.sandbox.paypal.com/checkoutnow?token=O1";
+  /** createAuthorizeOrder answers like the sandbox: payer flow -> PAYER_ACTION_REQUIRED, card -> authorized. */
+  const payerPayPal = () => {
+    const p = paypal();
+    vi.mocked(p.createAuthorizeOrder).mockImplementation(async (_i, _m, o) =>
+      o?.payer ? { id: "O1", status: "PAYER_ACTION_REQUIRED", approveUrl: PAYER_URL } : { id: "O1", status: "COMPLETED", authorization: { id: "A1", status: "CREATED" } },
+    );
+    vi.mocked(p.authorizeOrder).mockImplementation(async (id) => ({ id, status: "COMPLETED", authorization: { id: "A1", status: "CREATED" } }));
+    return p;
+  };
+  const act = (runId: string, rowId: string, body: unknown, headers: Record<string, string> = {}) =>
+    holdRoute(
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(runId), ...headers }, body: JSON.stringify(body) }),
+      params({ runId, rowId }),
+    );
+  const lastState = (msgs: StreamMsg[]) => (msgs.filter((m) => m.kind === "guard").at(-1) as Extract<StreamMsg, { kind: "guard" }>).state;
+
+  beforeEach(() => {
+    pp = payerPayPal();
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp } });
+  });
+  afterEach(() => {
+    delete process.env.PAYPAL_HOLD_PAYER;
+    delete process.env.PUBLIC_ORIGIN;
+  });
+
+  it("default: hold -> awaiting_payer with return/cancel urls on this origin; run not settled", async () => {
+    process.env.PUBLIC_ORIGIN = "https://carthold.example";
+    const runId = await startRun();
+    const msgs = await waitEnd(runId);
+    const row = lastState(msgs).rows[0];
+    expect(row).toMatchObject({ status: "awaiting_payer", paypalOrderId: "O1" });
+    const payer = (vi.mocked(pp.createAuthorizeOrder).mock.calls[0][2] as { payer: { returnUrl: string; cancelUrl: string } }).payer;
+    expect(payer.returnUrl).toBe(`https://carthold.example/demo/paypal-return?run=${runId}&row=${row.id}`);
+    expect(payer.cancelUrl).toBe(`https://carthold.example/demo/paypal-return?run=${runId}&row=${row.id}&cancelled=1`);
+    expect(isSettled(getRun(runId)!)).toBe(false);
+  });
+
+  it("m5: the SSE stream never carries payerActionUrl (read-only viewers could approve with their own account)", async () => {
+    const runId = await startRun();
+    const msgs = await waitEnd(runId);
+    expect(getRun(runId)!.guard.getState().rows[0].payerActionUrl).toBe(PAYER_URL);
+    expect(JSON.stringify(msgs)).not.toContain("payerActionUrl");
+    expect(JSON.stringify(msgs)).not.toContain("checkoutnow");
+  });
+
+  it("m5: GET /holds/:row (owner Bearer only) hands out the payer-action link", async () => {
+    const runId = await startRun();
+    const rowId = lastState(await waitEnd(runId)).rows[0].id;
+    const get = (headers: Record<string, string>, row = rowId) => payerUrlRoute(new Request("http://x", { headers }), params({ runId, rowId: row }));
+    expect((await get({})).status).toBe(403);
+    expect((await get({ authorization: "Bearer nope" })).status).toBe(403);
+    const ok = await get(auth(runId));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ payerActionUrl: PAYER_URL });
+    expect((await get(auth(runId), "d99")).status).toBe(409);
+    expect((await payerUrlRoute(new Request("http://x"), params({ runId: "nope", rowId }))).status).toBe(404);
+  });
+
+  it("without PUBLIC_ORIGIN the request origin is used", async () => {
+    const runId = await startRun();
+    await waitEnd(runId);
+    const payer = (vi.mocked(pp.createAuthorizeOrder).mock.calls[0][2] as { payer: { returnUrl: string } }).payer;
+    expect(payer.returnUrl.startsWith("http://x/demo/paypal-return?run=")).toBe(true);
+  });
+
+  it("PAYPAL_HOLD_PAYER=card: holds use the sandbox card (no payer urls)", async () => {
+    process.env.PAYPAL_HOLD_PAYER = "card";
+    const runId = await startRun();
+    const msgs = await waitEnd(runId);
+    expect(lastState(msgs).rows[0].status).toBe("held");
+    expect((vi.mocked(pp.createAuthorizeOrder).mock.calls[0][2] as { payer?: unknown }).payer).toBeUndefined();
+  });
+
+  it("payer-approved: 403 non-owner, 400 wrong/missing order id, then authorize -> held -> release captures", async () => {
+    const runId = await startRun();
+    const rowId = lastState(await waitEnd(runId)).rows[0].id;
+    expect((await act(runId, rowId, { action: "payer-approved", orderId: "O1" }, { authorization: "Bearer nope" })).status).toBe(403);
+    expect((await act(runId, rowId, { action: "payer-approved", orderId: "O2" })).status).toBe(400);
+    expect((await act(runId, rowId, { action: "payer-approved" })).status).toBe(400);
+    expect(pp.authorizeOrder).not.toHaveBeenCalled();
+    // Release before the buyer approved: nothing to capture.
+    expect((await act(runId, rowId, { action: "approve" })).status).toBe(409);
+    const ok = await act(runId, rowId, { action: "payer-approved", orderId: "O1" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).state.rows[0]).toMatchObject({ status: "held", authorizationId: "A1" });
+    // Second delivery (popup message + broadcast) is idempotent.
+    expect((await act(runId, rowId, { action: "payer-approved", orderId: "O1" })).status).toBe(200);
+    expect(pp.authorizeOrder).toHaveBeenCalledTimes(1);
+    const rel = await act(runId, rowId, { action: "approve" });
+    expect((await rel.json()).state.rows[0]).toMatchObject({ status: "captured" });
+  });
+
+  it("payer-approved when PayPal says not approved yet: 409 with a message, row still awaiting", async () => {
+    vi.mocked(pp.authorizeOrder).mockRejectedValueOnce(Object.assign(new Error("422"), { status: 422 }));
+    const runId = await startRun();
+    const rowId = lastState(await waitEnd(runId)).rows[0].id;
+    const res = await act(runId, rowId, { action: "payer-approved", orderId: "O1" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/not approved in PayPal yet/);
+    expect(getRun(runId)!.guard.getState().rows[0].status).toBe("awaiting_payer");
+  });
+
+  it("Simulated mug run: the clean retry goes through Approve with PayPal and the agent reports it HELD, never bought", async () => {
+    setRunDeps({ runners: { live: holdRunner, redteam: runRedteam }, guard: { llm: null, paypal: pp } });
+    const runId = await startRun({ userRequest: "Buy me a camping coffee mug under $40", mode: "redteam" });
+    const msgs = await waitEnd(runId);
+    const rows = lastState(msgs).rows;
+    expect(rows.map((r) => r.status)).toEqual(["blocked", "awaiting_payer"]);
+    expect(getRun(runId)!.guard.getState().rows[1].payerActionUrl).toBe(PAYER_URL);
+    const done = msgs.find((m) => m.kind === "agent" && m.event.type === "done") as Extract<StreamMsg, { kind: "agent" }>;
+    expect(JSON.stringify(done.event)).toMatch(/HELD waiting for your approval/);
+    expect(JSON.stringify(done.event)).not.toMatch(/I bought/);
+  }, 20_000);
+
+  it("cancel before buyer approval: cancelled, no PayPal void; shutdown sweep expires awaiting rows", async () => {
+    const runId = await startRun();
+    const rowId = lastState(await waitEnd(runId)).rows[0].id;
+    const res = await act(runId, rowId, { action: "reject" });
+    expect((await res.json()).state.rows[0].status).toBe("cancelled");
+    expect(pp.voidAuthorization).not.toHaveBeenCalled();
+    expect(isSettled(getRun(runId)!)).toBe(true);
+    const other = await startRun();
+    await waitEnd(other);
+    await voidAllHolds(1000);
+    expect(getRun(other)!.guard.getState().rows[0].status).toBe("expired");
+    expect(pp.voidAuthorization).not.toHaveBeenCalled();
+    resetRuns();
   });
 });
 
@@ -850,5 +983,67 @@ describe("m6: shutdown sweep", () => {
     await sweep;
     await vi.waitFor(() => expect(getRun(runId)!.guard.getState().rows[0]).toMatchObject({ status: "voided", decision: "system-voided" }));
     expect(getRun(runId)!.guard.getState().pendingHolds).toEqual([]);
+  });
+});
+
+describe("POST /api/paypal/webhook (verified PayPal events reconcile rows across runs)", () => {
+  const H = {
+    "content-type": "application/json", "paypal-transmission-id": "tx", "paypal-transmission-time": "2026-10-31T10:00:00Z",
+    "paypal-transmission-sig": "sig", "paypal-cert-url": "https://api.sandbox.paypal.com/cert", "paypal-auth-algo": "SHA256withRSA",
+  };
+  const hook = (event: unknown) =>
+    webhookRoute(new Request("http://x/api/paypal/webhook", { method: "POST", headers: H, body: JSON.stringify(event) }));
+  beforeEach(() => {
+    resetRuns();
+    vi.stubEnv("PAYPAL_CLIENT_ID", "id");
+    vi.stubEnv("PAYPAL_CLIENT_SECRET", "secret");
+    vi.stubEnv("PAYPAL_WEBHOOK_ID", "WH123");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.endsWith("/v1/oauth2/token") ? Response.json({ access_token: "t", expires_in: 3600 }) : Response.json({ verification_status: "SUCCESS" })));
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    resetRuns();
+  });
+
+  it("a hold voided outside CartHold: row voided, hold cleared, owner approve is 409", async () => {
+    const runId = await startRun();
+    const rowId = holdId(await waitEnd(runId));
+    const res = await hook({ id: "WH-run-1", event_type: "PAYMENT.AUTHORIZATION.VOIDED", resource: { id: "A1", status: "VOIDED" } });
+    expect(res.status).toBe(200);
+    expect(getRun(runId)!.guard.getState()).toMatchObject({ pendingHolds: [], amountAtRiskUsd: 0 });
+    expect(getRun(runId)!.guard.getState().rows[0].status).toBe("voided");
+    const act = await holdRoute(
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(runId) }, body: JSON.stringify({ action: "approve" }) }),
+      params({ runId, rowId }),
+    );
+    expect(act.status).toBe(409);
+    expect(pp.captureAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("503 without PAYPAL_WEBHOOK_ID: nothing changes", async () => {
+    vi.stubEnv("PAYPAL_WEBHOOK_ID", "");
+    const runId = await startRun();
+    await waitEnd(runId);
+    expect((await hook({ id: "WH-run-2", event_type: "PAYMENT.AUTHORIZATION.VOIDED", resource: { id: "A1" } })).status).toBe(503);
+    expect(getRun(runId)!.guard.getState().rows[0].status).toBe("held");
+  });
+});
+
+describe("orphaned-hold sweep (crash recovery)", () => {
+  afterEach(() => resetRuns());
+  it("runs once per process on the first createRun; isKnown sees this process's authorizations", async () => {
+    resetRuns();
+    const sweepOrphans = vi.fn(async () => []);
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp }, sweepOrphans });
+    const runId = await startRun();
+    await waitEnd(runId);
+    await startRun();
+    expect(sweepOrphans).toHaveBeenCalledTimes(1);
+    const { isKnown, bootAt } = (sweepOrphans.mock.calls[0] as unknown as [{ isKnown: (a: string) => boolean; bootAt: number }])[0];
+    expect(bootAt).toBeLessThanOrEqual(Date.now());
+    expect(isKnown("A1")).toBe(true);
+    expect(isKnown("NOPE")).toBe(false);
   });
 });

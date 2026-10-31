@@ -38,6 +38,9 @@ const STATUS_LABEL: Record<string, string> = {
   voided: "Voided",
   error: "PayPal error",
   unknown: "Unclear",
+  awaiting_payer: "Waiting for PayPal approval",
+  expired: "Expired",
+  cancelled: "Cancelled",
 };
 export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s;
 

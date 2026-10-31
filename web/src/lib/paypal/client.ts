@@ -5,15 +5,14 @@
 // Never log or throw the client secret or the access token.
 import "server-only";
 
-const BASE = {
-  sandbox: "https://api-m.sandbox.paypal.com",
-  live: "https://api-m.paypal.com",
-} as const;
+// Sandbox ONLY, hard-coded: this hackathon build must never touch real money (no live PayPal path exists).
+const SANDBOX = "https://api-m.sandbox.paypal.com";
 
-/** PAYPAL_ENVIRONMENT: SANDBOX (default) | LIVE | PRODUCTION, case-insensitive. */
+/** Always the PayPal sandbox. A PAYPAL_ENVIRONMENT other than SANDBOX is refused, never silently honoured. */
 export function baseUrl(): string {
   const env = (process.env.PAYPAL_ENVIRONMENT ?? "sandbox").toLowerCase();
-  return env === "live" || env === "production" ? BASE.live : BASE.sandbox;
+  if (env !== "sandbox") throw new Error("CartHold is sandbox-only: PAYPAL_ENVIRONMENT must be SANDBOX");
+  return SANDBOX;
 }
 
 export class PayPalError extends Error {

@@ -16,10 +16,14 @@ export type PayPalApi = Pick<
   Partial<Pick<typeof orders, "getOrder">>;
 
 /**
+ * awaiting_payer: HOLD order created with payment_source.paypal; the buyer must approve it in PayPal before CartHold
+ * authorizes it. Nothing is held at PayPal yet, but it counts against the budget. expired: nobody approved in time
+ * (or the server shut down); cancelled: the owner cancelled before buyer approval. Neither ever held money.
  * pending: allowed/held, PayPal calls in flight. unknown: PayPal outcome ambiguous (e.g. capture AND void
  * failed, or a network error mid-authorize) - counted as at risk and committed until resolveUnknown() settles it.
  */
-export type RowStatus = "pending" | "blocked" | "captured" | "held" | "voided" | "error" | "unknown";
+export type RowStatus =
+  | "pending" | "blocked" | "captured" | "held" | "voided" | "error" | "unknown" | "awaiting_payer" | "expired" | "cancelled";
 export type DecisionRow = {
   id: string;
   time: string; // ISO
@@ -33,7 +37,9 @@ export type DecisionRow = {
   authorizationId?: string;
   captureId?: string;
   status: RowStatus;
-  /** Hold only: when the authorization auto-voids if nobody decides (ISO). */
+  /** awaiting_payer only: PayPal's payer-action link (always a paypal.com https URL). The only PayPal URL a client sees. */
+  payerActionUrl?: string;
+  /** Hold only: when the authorization auto-voids (or, awaiting_payer, the approval request lapses) if nobody decides (ISO). */
   expiresAt?: string;
   /** What the human (or the hold timeout) decided, or "system-voided": the guard itself aborted it (capture or
    * authorization failed and it tried to void). A decided row is never re-armed as a hold, only void-retried. */
@@ -44,11 +50,11 @@ export type DecisionRow = {
 
 export type GuardState = {
   rows: DecisionRow[];
-  /** Row ids of authorizations waiting on a human. */
+  /** Row ids waiting on a human: held authorizations and awaiting_payer orders. */
   pendingHolds: string[];
   /** Sum of held (authorized, not captured) or unknown money. */
   amountAtRiskUsd: number;
-  /** Captured + held + unknown + pending: what counts against the budget. */
+  /** Captured + held + unknown + pending + awaiting_payer: what counts against the budget. */
   committedUsd: number;
   /** Row ids whose PayPal outcome is ambiguous; settle them with resolveUnknown(). */
   unknownRows?: string[];
@@ -58,6 +64,9 @@ export type GuardState = {
   autoPaidUsd?: number;
 };
 
+/** A verified PayPal webhook, reduced to the ids CartHold matches rows by (see lib/paypal/webhook.ts). */
+export type PayPalEvent = { type: string; authorizationId?: string; orderId?: string; captureId?: string; status?: string };
+
 export type GuardOptions = {
   mandate: Mandate;
   /** Inspector LLM. Omitted: inspect() uses Gemini if GEMINI_API_KEY is set, else regex backstop only. null: regex backstop only, never an LLM. */
@@ -65,6 +74,11 @@ export type GuardOptions = {
   paypal?: PayPalApi;
   /** Auto-void a hold nobody decided on after this long. Default 5 min. */
   holdTimeoutMs?: number;
+  /**
+   * "Approve with PayPal" holds: return/cancel URLs for a hold row. Set: a HOLD creates a payment_source.paypal order
+   * the buyer approves in PayPal (row awaiting_payer), and payerApproved() authorizes it. Unset: holds use the card path.
+   */
+  payerUrls?: (rowId: string) => orders.PayerUrls;
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -85,6 +99,24 @@ const AUTH_DEAD = new Set(["DENIED", "VOIDED", "EXPIRED", "DECLINED"]);
 // ponytail: PARTIALLY_CAPTURED keeps the row's full amount (getOrder exposes no captured amount); upgrade when it does.
 const AUTH_CAPTURED = new Set(["CAPTURED", "PARTIALLY_CAPTURED"]);
 const MAX_RESOLVES = 5;
+/** Default window for each phase of a hold: buyer approval in PayPal (awaiting_payer), then the authorization (held). */
+export const HOLD_TIMEOUT_MS = 5 * 60_000;
+/** Longest a CartHold authorization stays live with default timers: payer window + held window. The orphan sweep
+ * only voids authorizations older than this (plus margin), so it never kills a live hold of another instance. */
+export const MAX_HOLD_LIFETIME_MS = 2 * HOLD_TIMEOUT_MS;
+/** Set by session.voidAllHolds when the SIGTERM sweep starts. */
+const shuttingDown = () => !!(globalThis as { __cartholdShuttingDown?: boolean }).__cartholdShuttingDown;
+/** Order statuses that mean the buyer step never turned into an authorization. */
+const ORDER_NOT_AUTHORIZED = new Set(["CREATED", "APPROVED", "PAYER_ACTION_REQUIRED"]);
+/** Only an https PayPal page may reach the browser as a payer-action link. */
+export const isPayPalUrl = (u: string) => {
+  try {
+    const { protocol, hostname } = new URL(u);
+    return protocol === "https:" && (hostname === "paypal.com" || hostname.endsWith(".paypal.com"));
+  } catch {
+    return false;
+  }
+};
 type OrderItem = { name: string; quantity: number; unitPriceUsd: number };
 const productsOf = (slug: string): Product[] => {
   const s = getStore(slug);
@@ -135,10 +167,11 @@ function followedSentence(items: OrderItem[], products: Product[], lines: Flagge
   return null;
 }
 
-export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 * 60_000 }: GuardOptions) {
+export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOLD_TIMEOUT_MS, payerUrls }: GuardOptions) {
   const rows: DecisionRow[] = [];
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const resolveTries = new Map<string, number>();
+  const authorizing = new Map<string, Promise<DecisionRow>>();
   const listeners = new Set<(s: GuardState) => void>();
   const pagesRead = new Set<string>();
   let seq = 0;
@@ -151,7 +184,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
     rows: rows.map((r) => ({ ...r, reasons: [...r.reasons] })),
     pendingHolds: [...timers.keys()],
     amountAtRiskUsd: sum((r) => r.status === "held" || r.status === "unknown"),
-    committedUsd: sum((r) => ["pending", "held", "captured", "unknown"].includes(r.status)),
+    committedUsd: sum((r) => ["pending", "held", "captured", "unknown", "awaiting_payer"].includes(r.status)),
     unknownRows: rows.filter((r) => r.status === "unknown").map((r) => r.id),
     unresolvable: rows.filter((r) => r.status === "unknown" && r.unresolvable).map((r) => r.id),
     // In-flight and unknown allow-path money counts too: it may have been paid without asking.
@@ -199,18 +232,21 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
         const insp = llm === null
           ? { ...detectInjection(text, mandate.userRequest), llm: false, quote: null }
           : await inspect(text, mandate.userRequest, order, llm, { hidden, merchantPage: slug === store.slug });
-        return { slug, insp, lines: flaggedLines(text, mandate.userRequest) };
+        return { slug, insp, hidden, lines: flaggedLines(text, mandate.userRequest) };
       }),
     );
     const deviates = catalog.length > 0 || policy.reasons.some((r) => r.includes("not traceable"));
     const blocks: string[] = [];
     const warnings: string[] = [];
     let triggeringText: string | undefined;
-    for (const { slug, insp, lines } of pages) {
+    for (const { slug, insp, hidden, lines } of pages) {
       const merchantPage = slug === store.slug;
-      // A verified LLM quote is one more injected segment: it blocks only if the order follows it, like the regex lines.
-      const quoted = insp.quote ? [{ line: insp.quote, sentence: insp.quote, reasons: [] }] : [];
-      const hit = followedSentence(items, products, [...lines, ...quoted], merchantPage);
+      // A verified LLM quote of injected (regex-flagged / hidden) text blocks only if the order follows it, like the
+      // regex lines. A verified VISIBLE quote was already checked by inspect() to be followed by this order: direct hit.
+      const q = insp.llm ? insp.quote : null;
+      const injectedQuote = !!q && (lines.some((l) => l.line.includes(q)) || hidden.some((h) => h.includes(q)));
+      const quoted = q && injectedQuote ? [{ line: q, sentence: q, reasons: [] }] : [];
+      const hit = (q && !injectedQuote ? q : null) || followedSentence(items, products, [...lines, ...quoted], merchantPage);
       // insp.flagged = regex backstop flagged the page or the LLM quote was verified; never an unchecked LLM opinion.
       if (hit) {
         blocks.push(`inspector: order follows injected text on page ${slug}: "${hit}"`);
@@ -275,7 +311,14 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
   function armHold(row: DecisionRow, authorizationId: string) {
     const expiresAt = new Date(Date.now() + holdTimeoutMs).toISOString();
     timers.set(row.id, setTimeout(() => void settle(row.id, "void", "auto-voided: approval timed out", "expired").catch(() => {}), holdTimeoutMs));
-    update(row, { authorizationId, status: "held", expiresAt });
+    update(row, { authorizationId, status: "held", expiresAt, payerActionUrl: undefined });
+  }
+
+  /** Waiting for the buyer to approve in PayPal. On timeout the row just expires: nothing was authorized, no call needed. */
+  function armPayer(row: DecisionRow, payerActionUrl: string, ms = holdTimeoutMs) {
+    const expiresAt = new Date(Date.now() + ms).toISOString();
+    timers.set(row.id, setTimeout(() => void settle(row.id, "void", "", "expired").catch(() => {}), ms));
+    update(row, { status: "awaiting_payer", payerActionUrl, expiresAt });
   }
 
   async function onProposeOrder(order: AgentOrder): Promise<string> {
@@ -309,8 +352,18 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
       const store = stores.find((s) => s.name.toLowerCase() === row.merchant.toLowerCase());
       const merchant = { id: store?.merchantId ?? order.sourceSlug, name: row.merchant };
       const items = order.items.map((i) => ({ name: i.name, quantity: i.quantity, unitAmount: i.unitPriceUsd }));
-      let o = await paypal.createAuthorizeOrder(items, merchant, { requestId: rid(row, "auth") });
+      const payer = v.verdict === "hold" ? payerUrls?.(row.id) : undefined;
+      let o = await paypal.createAuthorizeOrder(items, merchant, { requestId: rid(row, "auth"), ...(payer ? { payer } : {}) });
       update(row, { paypalOrderId: o.id });
+      if (payer && !o.authorization && o.approveUrl) {
+        if (!isPayPalUrl(o.approveUrl)) {
+          console.error("[carthold] payer-action link is not a PayPal URL:", o.approveUrl);
+          update(row, { status: "error", reasons: [...row.reasons, "PayPal approval link was not a PayPal page"] });
+          return "Payment failed: PayPal approval link was not a PayPal page";
+        }
+        armPayer(row, o.approveUrl);
+        return `HELD for human approval: waiting for the buyer to approve PayPal order ${o.id}. Nothing is authorized or charged yet.`;
+      }
       if (!o.authorization && !o.approveUrl) o = await paypal.authorizeOrder(o.id, rid(row, "authz"));
       const auth = o.authorization;
       const fail = (r: string) => (update(row, { status: "error", reasons: [...row.reasons, r] }), `Payment failed: ${r}`);
@@ -344,6 +397,24 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
   async function settle(holdId: string, action: "capture" | "void", note: string, decision: NonNullable<DecisionRow["decision"]>): Promise<DecisionRow> {
     const row = rows.find((r) => r.id === holdId);
     const timer = timers.get(holdId);
+    if (row && timer && row.status === "awaiting_payer") {
+      // Nothing authorized yet: there is nothing to capture, and nothing to void (the PayPal order just lapses).
+      if (action === "capture") throw new Error(`no pending hold ${holdId}: waiting for the buyer to approve in PayPal`);
+      clearTimeout(timer);
+      timers.delete(holdId);
+      const why =
+        decision === "rejected" ? "cancelled by user before PayPal approval"
+        : decision === "expired" ? "expired: the buyer did not approve in PayPal in time"
+        : "expired: server shutting down before PayPal approval";
+      update(row, {
+        status: decision === "rejected" ? "cancelled" : "expired",
+        decision,
+        expiresAt: undefined,
+        payerActionUrl: undefined,
+        reasons: [...row.reasons, `${why}; nothing was authorized or charged`],
+      });
+      return { ...row, reasons: [...row.reasons] };
+    }
     if (!row || !timer || !row.authorizationId) throw new Error(`no pending hold ${holdId}`);
     // Claim the hold synchronously so approve/reject/timeout can never both act on it.
     clearTimeout(timer);
@@ -377,14 +448,34 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
 
   async function resolveOnce(row: DecisionRow) {
     if (!row.paypalOrderId || !paypal.getOrder) return; // create never answered: no id to ask about
-    let a;
+    let o: orders.OrderResult;
     try {
-      a = (await paypal.getOrder(row.paypalOrderId)).authorization;
+      o = await paypal.getOrder(row.paypalOrderId);
     } catch (e) {
       ppError(e, "getOrder");
       return;
     }
-    if (!a || row.status !== "unknown") return;
+    if (o.authorization) return reconcileAuth(row, o.authorization);
+    if (row.status !== "unknown" || row.authorizationId || !ORDER_NOT_AUTHORIZED.has(o.status)) return;
+    // m4: authorize answered 5xx / never answered, but PayPal holds nothing. Payer row: back to waiting for the buyer
+    // for whatever is left of its window, else expired. Card row: nothing was ever held, so it just failed.
+    const left = Date.parse(row.expiresAt ?? "") - Date.now();
+    if (row.payerActionUrl && !row.decision && left > 0) {
+      update(row, { reasons: [...row.reasons, `resolved: not authorized at PayPal (order ${o.status}), waiting for the buyer again`] });
+      return armPayer(row, row.payerActionUrl, left);
+    }
+    update(row, {
+      status: row.payerActionUrl ? "expired" : "error",
+      decision: row.decision ?? (row.payerActionUrl ? "expired" : undefined),
+      payerActionUrl: undefined,
+      expiresAt: undefined,
+      reasons: [...row.reasons, `resolved: nothing authorized at PayPal (order ${o.status})`],
+    });
+  }
+
+  /** An unknown row's authorization, as PayPal reports it (getOrder or a verified webhook): settle the row. */
+  async function reconcileAuth(row: DecisionRow, a: { id: string; status: string }) {
+    if (row.status !== "unknown") return;
     if (AUTH_CAPTURED.has(a.status)) update(row, { status: "captured", authorizationId: a.id, reasons: [...row.reasons, "resolved: captured at PayPal"] });
     else if (AUTH_DEAD.has(a.status)) update(row, { status: "voided", authorizationId: a.id, reasons: [...row.reasons, `resolved: authorization ${a.status} at PayPal`] });
     else if (AUTH_OK.has(a.status) && row.decision) {
@@ -402,8 +493,113 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = 5 *
     }
   }
 
+  /**
+   * The buyer approved the order in PayPal (PayPal redirected to return_url with token=<order id>): authorize it, so
+   * the money is held, and start a fresh hold timer for the owner's release / cancel. Idempotent per row.
+   */
+  function payerApproved(rowId: string, orderId: string): Promise<DecisionRow> {
+    const inflight = authorizing.get(rowId);
+    if (inflight) return inflight;
+    const row = rows.find((r) => r.id === rowId);
+    if (!row || !row.paypalOrderId) return Promise.reject(new Error(`no pending hold ${rowId}`));
+    if (row.paypalOrderId !== orderId) return Promise.reject(new Error("order id does not match this hold"));
+    const copy = () => ({ ...row, reasons: [...row.reasons] });
+    // Already authorized by an earlier call: same answer, no second authorize.
+    if (row.status !== "awaiting_payer")
+      return row.authorizationId && ["held", "captured", "voided"].includes(row.status)
+        ? Promise.resolve(copy())
+        : Promise.reject(new Error(`no pending hold ${rowId}`));
+    const p = (async () => {
+      const left = Math.max(1, Date.parse(row.expiresAt ?? "") - Date.now() || holdTimeoutMs);
+      const url = row.payerActionUrl!;
+      disarm(row);
+      update(row, { status: "pending" });
+      const notApproved = (why: string) => {
+        // PayPal refused (4xx, e.g. ORDER_NOT_APPROVED) or nothing was sent: nothing is held, keep waiting.
+        armPayer(row, url, left);
+        return new Error(`not approved in PayPal yet (${why})`);
+      };
+      let o: orders.OrderResult;
+      try {
+        o = await paypal.authorizeOrder(orderId, rid(row, "authz"));
+      } catch (e) {
+        const why = ppError(e, "authorize");
+        const s = statusOf(e);
+        if (e instanceof PayPalNotSentError || (s !== undefined && s < 500)) throw notApproved(why);
+        update(row, { status: "unknown", reasons: [...row.reasons, `${why}; money may be held at PayPal`] });
+        return copy();
+      }
+      const auth = o.authorization;
+      if (!auth) throw notApproved(`order ${o.status}`);
+      row.authorizationId = auth.id;
+      if (AUTH_DEAD.has(auth.status)) {
+        update(row, { status: "error", payerActionUrl: undefined, expiresAt: undefined, reasons: [...row.reasons, `authorization ${auth.id} ${auth.status}`] });
+      } else if (!AUTH_OK.has(auth.status)) {
+        await voidOrUnknown(row, auth.id, `authorization ${auth.id} ${auth.status}`);
+      } else {
+        update(row, { reasons: [...row.reasons, "buyer approved in PayPal"] });
+        armHold(row, auth.id);
+        // m3: disarm() hid this row from the SIGTERM sweep while authorize was in flight; void it ourselves.
+        if (shuttingDown()) await settle(row.id, "void", "auto-voided: server shutting down", "system-voided");
+      }
+      return copy();
+    })().finally(() => authorizing.delete(rowId));
+    authorizing.set(rowId, p);
+    return p;
+  }
+
+  const disarm = (row: DecisionRow) => {
+    clearTimeout(timers.get(row.id));
+    timers.delete(row.id);
+  };
+
+  /**
+   * A VERIFIED PayPal webhook (the route checks the signature first). Returns true if a row's status changed.
+   * No-op when the row already matches, or is "pending" (its own in-flight PayPal call settles it).
+   */
+  async function applyPayPalEvent(e: PayPalEvent): Promise<boolean> {
+    const row = rows.find(
+      (r) =>
+        (e.authorizationId && r.authorizationId === e.authorizationId) ||
+        (e.captureId && r.captureId === e.captureId) ||
+        (e.orderId && r.paypalOrderId === e.orderId),
+    );
+    if (!row) return false;
+    const before = row.status;
+    const open = row.status === "held" || row.status === "unknown";
+    const note = (s: string) => [...row.reasons, `${s} (PayPal webhook)`];
+    switch (e.type) {
+      case "PAYMENT.AUTHORIZATION.VOIDED":
+        if (!open) break;
+        disarm(row);
+        update(row, { status: "voided", expiresAt: undefined, reasons: note("authorization voided at PayPal") });
+        break;
+      case "PAYMENT.CAPTURE.COMPLETED":
+        if (!open) break;
+        disarm(row);
+        update(row, { status: "captured", captureId: e.captureId ?? row.captureId, expiresAt: undefined, reasons: note("capture completed at PayPal") });
+        break;
+      case "PAYMENT.CAPTURE.DENIED":
+      case "PAYMENT.CAPTURE.DECLINED": {
+        // Not paid; the authorization may still hold money, so void it like any failed capture (never re-armed).
+        const authId = row.authorizationId ?? e.authorizationId;
+        if (row.status === "unknown" && authId) {
+          row.decision ??= "system-voided";
+          await voidOrUnknown(row, authId, `capture ${e.captureId ?? "?"} ${e.type.split(".")[2]} at PayPal (webhook)`);
+        }
+        break;
+      }
+      case "PAYMENT.AUTHORIZATION.CREATED":
+        if (e.authorizationId) await reconcileAuth(row, { id: e.authorizationId, status: e.status ?? "CREATED" });
+        break;
+    }
+    return row.status !== before;
+  }
+
   return {
+    applyPayPalEvent,
     onProposeOrder,
+    payerApproved,
     resolveUnknown: async (rowId: string): Promise<DecisionRow> => {
       const row = rows.find((r) => r.id === rowId && r.status === "unknown");
       if (!row) throw new Error(`no unknown row ${rowId}`);

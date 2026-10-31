@@ -15,7 +15,8 @@ import { FIXTURE_REQUEST, fixtureEvents, fixturePages, fixtureState, settleFixtu
 import { markParts } from "./highlight";
 import { hasInjection, orderReasons, plainReason, reasonTags } from "./reasons";
 import { Trace } from "./Trace";
-import { ReasonLine, Tags, VerdictStack, paidUsd, usd } from "./Verdicts";
+import { ReasonLine, Tags, VerdictStack, paidUsd, usd, type Decide } from "./Verdicts";
+import { PAYER_BACK_KEY, PAYER_CHANNEL, PAYER_RETURN_KEY, openPayerWindow, payerMessageFor, type PayerReturn } from "@/app/demo/paypal-return/payer";
 import "./demo.css";
 
 type Mode = "live" | "redteam";
@@ -193,7 +194,95 @@ function Demo({ fixture }: { fixture: boolean }) {
     }
   }
 
-  async function decide(row: DecisionRow, action: "approve" | "reject") {
+  /** "Approve with PayPal": the buyer approves in a popup (same tab if popups are blocked); see paypal-return/page.tsx. */
+  // m5: the stream never carries the payer-action link; the owner fetches it with the Bearer token. The popup opens
+  // first, still inside the click (else it is blocked), and is pointed at PayPal once the link arrives.
+  async function openPayPal(row: DecisionRow) {
+    if (!runId || !ownerToken || fixture) return;
+    setError(null);
+    const w = openPayerWindow(() => window.open("", "carthold-paypal", "popup,width=480,height=720"));
+    let url: string | undefined;
+    let status: number | undefined;
+    let msg: string | undefined;
+    try {
+      const res = await fetch(`/api/runs/${runId}/holds/${row.id}`, { headers: { authorization: `Bearer ${ownerToken}` } });
+      const body = (await res.json().catch(() => ({}))) as { payerActionUrl?: string; error?: string };
+      status = res.status;
+      msg = body.error;
+      if (res.ok) url = body.payerActionUrl;
+    } catch {}
+    if (!url) {
+      w?.close();
+      return setError(`Could not open PayPal: ${actionError(status, msg)}`);
+    }
+    if (w) return void w.location.replace(url);
+    try {
+      sessionStorage.setItem(PAYER_BACK_KEY, JSON.stringify({ run: runId, url: window.location.href }));
+    } catch {}
+    window.location.assign(url);
+  }
+
+  /** PayPal sent the buyer back: tell the server (it checks the order id and authorizes), or note a buyer cancel. */
+  async function payerReturned(m: PayerReturn) {
+    if (m.cancelled) return setError("PayPal approval was cancelled. The payment stays waiting until it expires, or you can cancel it.");
+    if (!ownerToken || decidingRef.current.has(m.row)) return;
+    decidingRef.current.add(m.row);
+    setBusy((b) => ({ ...b, [m.row]: true }));
+    try {
+      const res = await fetch(`/api/runs/${runId}/holds/${m.row}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ action: "payer-approved", orderId: m.orderId }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { state?: GuardState; error?: string };
+      // 409 "no pending hold": already authorized (a second delivery) or expired; the stream has the real outcome.
+      if (res.status === 409 && body.error?.startsWith("no pending hold")) return;
+      if (!res.ok || !body.state) return setError(`PayPal approval failed: ${actionError(res.status, body.error)}`);
+      setGuard(body.state);
+    } catch {
+      setError(`PayPal approval failed: ${actionError()}`);
+    } finally {
+      decidingRef.current.delete(m.row);
+      setBusy((b) => ({ ...b, [m.row]: false }));
+    }
+  }
+  const payerRef = useRef(payerReturned);
+  useEffect(() => {
+    payerRef.current = payerReturned;
+  });
+
+  // The return page reaches this tab by postMessage (popup with opener), BroadcastChannel (opener cut by PayPal), or
+  // sessionStorage (same-tab fallback). Same-origin only; the server re-checks the order id against the row.
+  useEffect(() => {
+    if (fixture || !runId) return;
+    const take = (data: unknown) => {
+      const m = payerMessageFor(data, runId);
+      if (m) void payerRef.current(m);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin === window.location.origin) take(e.data);
+    };
+    window.addEventListener("message", onMessage);
+    let ch: BroadcastChannel | undefined;
+    try {
+      ch = new BroadcastChannel(PAYER_CHANNEL);
+      ch.onmessage = (e) => take(e.data);
+    } catch {}
+    try {
+      const saved = sessionStorage.getItem(PAYER_RETURN_KEY);
+      if (saved) {
+        sessionStorage.removeItem(PAYER_RETURN_KEY);
+        queueMicrotask(() => take(JSON.parse(saved)));
+      }
+    } catch {}
+    return () => {
+      window.removeEventListener("message", onMessage);
+      ch?.close();
+    };
+  }, [fixture, runId]);
+
+  const decide: Decide = async (row, action) => {
+    if (action === "paypal") return openPayPal(row);
     if (decidingRef.current.has(row.id)) return;
     decidingRef.current.add(row.id);
     setBusy((b) => ({ ...b, [row.id]: true }));
@@ -216,18 +305,18 @@ function Demo({ fixture }: { fixture: boolean }) {
       // 409 = hold already settled (auto-void, another tab, an earlier click). Not an error:
       // the open stream carries the real outcome.
       if (res.status === 409) return;
-      const verb = action === "approve" ? "Approve" : "Reject";
+      const verb = action === "approve" ? "Release" : "Cancel";
       if (res.status === 429) return setError(`${verb} failed: too many clicks right now. Wait a minute and try again.`);
       const body = (await res.json().catch(() => ({}))) as { state?: GuardState; error?: string };
       if (!res.ok || !body.state) return setError(`${verb} failed: ${actionError(res.status, body.error)}`);
       setGuard(body.state);
     } catch {
-      setError(`${action === "approve" ? "Approve" : "Reject"} failed: ${actionError()}`);
+      setError(`${action === "approve" ? "Release" : "Cancel"} failed: ${actionError()}`);
     } finally {
       decidingRef.current.delete(row.id);
       setBusy((b) => ({ ...b, [row.id]: false }));
     }
-  }
+  };
 
   async function openReveal(row: DecisionRow) {
     if (row.status !== "blocked") return;
@@ -422,7 +511,7 @@ function Kpis({ guard }: { guard: GuardState }) {
             aria-valuenow={guard.committedUsd}
           >
             <span className="h-full bg-paid transition-[width] duration-[var(--duration-slower)] ease-out" style={{ width: pct(captured) }} />
-            <span className="h-full bg-hold transition-[width] duration-[var(--duration-slower)] ease-out" style={{ width: pct(guard.amountAtRiskUsd) }} />
+            <span className="h-full bg-hold transition-[width] duration-[var(--duration-slower)] ease-out" style={{ width: pct(guard.committedUsd - captured) }} />
           </span>
           {autoPaid != null && (
             <span
@@ -593,7 +682,7 @@ function EmptyState({ composer }: { composer: ReactNode }) {
       <div className="lg:col-span-7">
         <h1 className="max-w-[16ch] font-display text-3xl font-semibold tracking-tight text-balance md:text-4xl">Let an agent shop. Keep the final say.</h1>
         <p className="mt-4 max-w-[54ch] text-lg text-ink-muted">
-          CartHold checks every payment the agent proposes against your rules. Anything over your limit is held with PayPal until you approve it.
+          CartHold checks every payment the agent proposes against your rules. Anything over your limit waits for you: approve it in PayPal, then release or cancel the held payment.
         </p>
         <Panel className="mt-8">{composer}</Panel>
       </div>
@@ -631,8 +720,8 @@ function GhostPreview() {
             </div>
           </div>
           <div className="mt-5 grid grid-cols-[1fr_auto] gap-2">
-            <span className={buttonClasses({ variant: "approve", size: "lg" })}>Approve $30.00</span>
-            <span className={buttonClasses({ variant: "ghost", size: "lg" })}>Reject</span>
+            <span className={buttonClasses({ variant: "approve", size: "lg" })}>Release $30.00</span>
+            <span className={buttonClasses({ variant: "ghost", size: "lg" })}>Cancel</span>
           </div>
         </Panel>
         {chips.map(([k, s, amt, text]) => (

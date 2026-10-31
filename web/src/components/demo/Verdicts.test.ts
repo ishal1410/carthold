@@ -4,15 +4,15 @@ import { describe, expect, it } from "vitest";
 import { fixtureState } from "./fixtures";
 import { VerdictStack } from "./Verdicts";
 
-// A tab without the run's owner token must not offer working Approve/Reject buttons.
+// A tab without the run's owner token must not offer working Release/Cancel buttons.
 const render = (viewOnly: boolean) =>
   renderToStaticMarkup(
     createElement(VerdictStack, { guard: fixtureState(), busy: {}, simulated: true, viewOnly, onDecide: () => {}, onReveal: () => {} }),
   );
-const decisionButtons = (html: string) => html.match(/<button[^>]*>(?:(?!<\/button>).)*?(Approve|Reject)/g) ?? [];
+const decisionButtons = (html: string) => html.match(/<button[^>]*>(?:(?!<\/button>).)*?(Approve|Release|Reject|Cancel)/g) ?? [];
 
 describe("VerdictStack view-only", () => {
-  it("disables Approve and Reject and says why when viewOnly", () => {
+  it("disables Release and Cancel and says why when viewOnly", () => {
     const html = render(true);
     const buttons = decisionButtons(html);
     expect(buttons.length).toBeGreaterThanOrEqual(2);

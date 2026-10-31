@@ -35,7 +35,7 @@ function PayPalIds({ data }: Cell) {
 
 function Countdown({ data }: Cell) {
   const [now, setNow] = useState(() => Date.now());
-  const expiresAt = data?.status === "held" ? data.expiresAt : undefined;
+  const expiresAt = data?.status === "held" || data?.status === "awaiting_payer" ? data.expiresAt : undefined;
   useEffect(() => {
     if (!expiresAt) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -95,7 +95,7 @@ const st = (p: { data?: DecisionRow }): string => p.data?.status ?? "";
 const rowClassRules: RowClassRules<DecisionRow> = {
   "ag-st-pending": (p) => st(p) === "pending",
   "ag-st-blocked": (p) => st(p) === "blocked",
-  "ag-st-held": (p) => st(p) === "held",
+  "ag-st-held": (p) => st(p) === "held" || st(p) === "awaiting_payer",
   "ag-st-captured": (p) => st(p) === "captured",
   "ag-st-error": (p) => st(p) === "error" || st(p) === "unknown",
 };
@@ -106,7 +106,7 @@ const AUTO_HEIGHT_MAX = 10;
 function DecisionCard({ row, onSelect }: { row: DecisionRow; onSelect?: (row: DecisionRow) => void }) {
   const lead = headline(row.reasons);
   return (
-    <li className={`ag-st-${row.status === "unknown" ? "error" : row.status} overflow-hidden rounded-md border border-line bg-surface-1 text-sm shadow-raise`}>
+    <li className={`ag-st-${row.status === "unknown" ? "error" : row.status === "awaiting_payer" ? "held" : row.status} overflow-hidden rounded-md border border-line bg-surface-1 text-sm shadow-raise`}>
       <button type="button" onClick={() => onSelect?.(row)} className="block w-full px-3.5 pt-3 pb-2.5 text-left">
         <span className="flex items-baseline justify-between gap-3">
           <span className="min-w-0 truncate font-medium text-ink">{row.merchant}</span>
@@ -116,7 +116,7 @@ function DecisionCard({ row, onSelect }: { row: DecisionRow; onSelect?: (row: De
         <span className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
           <VerdictPill data={row} />
           <span className="text-ink-muted">{statusLabel(row.status)}</span>
-          {row.status === "held" && <Countdown data={row} />}
+          {(row.status === "held" || row.status === "awaiting_payer") && <Countdown data={row} />}
           <span className="figures ml-auto text-2xs text-ink-faint">{formatTime(row.time)}</span>
         </span>
         {lead && (
@@ -147,7 +147,7 @@ export function DecisionGrid({ rows, onSelect, height = 420 }: DecisionGridProps
   const status = statuses.includes(statusPick as DecisionRow["status"]) ? statusPick : "all";
   const rowData = useMemo(() => filterDecisions(sorted, status, search), [sorted, status, search]);
   const autoHeight = rowData.length <= AUTO_HEIGHT_MAX;
-  const anyHeld = rows.some((r) => r.status === "held");
+  const anyHeld = rows.some((r) => r.status === "held" || r.status === "awaiting_payer");
   const cols = useMemo(() => (anyHeld ? [...columnDefs, expiresCol] : columnDefs), [anyHeld]);
   const grid = useRef<AgGridReact<DecisionRow>>(null);
   return (

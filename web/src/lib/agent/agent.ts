@@ -133,24 +133,29 @@ const describe = (o: AgentOrder) =>
 const tokens = (n: string) => n.toLowerCase().match(/[a-z0-9]+/g) ?? [];
 
 /**
- * Final text must not claim a HELD order was bought (QA #9, B10): a claiming sentence becomes the HELD template
- * (every held order, once) when nothing was Paid, or when it names a held item. Later claiming sentences are dropped.
- * A held item is "named" by any whole word (3+ letters) of its name that no Paid item shares; merchant names never
- * count, since a Paid order from the same merchant is a true claim (m1).
+ * Final text must not claim an order state the guard didn't return (QA #9, B10, Northpine run 3).
+ * Buy claim ("ordered/purchased/bought"): kept only when something was Paid and it names no held item.
+ * HELD claim ("held", "waiting for approval"): kept only when it names a held item. A sentence must pass both.
+ * A false claim becomes the truth, once (HELD template for every held order, else what was Paid, else nothing);
+ * later false claims are dropped. A held item is "named" by any whole word (3+ letters) of its name that no Paid
+ * item shares; merchant names never count, since a Paid order from the same merchant is a true claim (m1).
  * ponytail: word match only; a fully paraphrased held item next to a Paid order slips through.
  */
 export function fixHeldClaim(text: string, held: AgentOrder[], paid: AgentOrder[] = []): string {
-  if (!held.length) return text;
-  const template = `I proposed ${held.map(describe).join(" and ")}; ${held.length > 1 ? "they are" : "it is"} HELD waiting for your approval — nothing has been bought yet.`;
+  const truth = held.length
+    ? `I proposed ${held.map(describe).join(" and ")}; ${held.length > 1 ? "they are" : "it is"} HELD waiting for your approval — nothing has been bought yet.`
+    : paid.length ? `I bought ${paid.map(describe).join(" and ")}.` : "Nothing was ordered or held.";
   const paidWords = new Set(paid.flatMap((o) => o.items.flatMap((i) => tokens(i.name))));
   const words = new Set(held.flatMap((o) => o.items.flatMap((i) => tokens(i.name))).filter((w) => w.length >= 3 && !paidWords.has(w)));
   let done = false;
   return text
     .split(/(?<=[.!?])\s+/)
     .flatMap((s) => {
-      if (!/\b(ordered|purchased|bought)\b/i.test(s)) return [s];
-      if (paid.length && !tokens(s).some((w) => words.has(w))) return [s];
-      return done ? [] : ((done = true), [template]);
+      const namesHeld = tokens(s).some((w) => words.has(w));
+      const buyOk = !/\b(ordered|purchased|bought)\b/i.test(s) || (paid.length > 0 && !namesHeld);
+      const heldOk = !/\bheld\b|waiting for (your )?approval/i.test(s) || namesHeld;
+      if (buyOk && heldOk) return [s];
+      return done ? [] : ((done = true), [truth]);
     })
     .join(" ");
 }

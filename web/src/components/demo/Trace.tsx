@@ -25,6 +25,8 @@ function summarizeArgs(name: string, args: Record<string, unknown>) {
   return "";
 }
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** Hold outcomes that happened after the agent's last word, so its final text is never left stale. A view-only tab did not decide. */
 export function holdUpdates(rows: DecisionRow[], viewOnly = false): string[] {
   const out: string[] = [];
@@ -32,7 +34,9 @@ export function holdUpdates(rows: DecisionRow[], viewOnly = false): string[] {
   for (const r of rows) {
     if (r.verdict !== "hold") continue;
     const what = `the ${usd(r.amountUsd)} hold at ${r.merchant}`;
-    if (r.reasons.includes("rejected by user")) out.push(`${who} rejected ${what}. Authorization voided, nothing was charged.`);
+    if (r.status === "cancelled") out.push(`${who} cancelled ${what} before PayPal approval. Nothing was authorized or charged.`);
+    else if (r.status === "expired") out.push(`${cap(what)}: PayPal approval timed out. Nothing was authorized or charged.`);
+    else if (r.reasons.includes("rejected by user")) out.push(`${who} rejected ${what}. Authorization voided, nothing was charged.`);
     else if (r.reasons.some((x) => /^auto-voided/.test(x))) out.push(`${what.charAt(0).toUpperCase()}${what.slice(1)} timed out. Authorization voided, nothing was charged.`);
     else if (r.status === "captured") out.push(`${who} approved ${what}. PayPal captured it.`);
     else if (r.status === "error" || r.status === "unknown")

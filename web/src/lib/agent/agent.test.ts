@@ -28,14 +28,14 @@ const order = { merchant: "Northpine Outfitters", items: [{ name: "Mug", quantit
 describe("runAgent", () => {
   it("dispatches list_stores, read_store_page and propose_order", async () => {
     const { llm, seen } = scripted(call("list_stores"), call("read_store_page", { slug: "giftlane" }), call("propose_order", order), say("Bought the mug."));
-    const onProposeOrder = vi.fn(async () => "authorized ORDER_1");
+    const onProposeOrder = vi.fn(async () => "Paid: order ORDER_1");
     const events: AgentEvent[] = [];
     const out = await runAgent({ userRequest: "buy a mug", onProposeOrder, onEvent: (e) => events.push(e), llm });
 
     expect(lastResult(seen[1])).toContain("northpine: Northpine Outfitters");
     expect(lastResult(seen[2])).toContain("Sister-Gift Bundle"); // hidden text is read
     expect(onProposeOrder).toHaveBeenCalledWith(order);
-    expect(lastResult(seen[3])).toBe("authorized ORDER_1");
+    expect(lastResult(seen[3])).toBe("Paid: order ORDER_1");
     expect(out.text).toBe("Bought the mug.");
     expect(events.at(-1)).toEqual({ type: "done", reason: "final_answer", text: "Bought the mug." });
     expect(events.filter((e) => e.type === "tool_call").map((e) => (e as { name: string }).name)).toEqual(["list_stores", "read_store_page", "propose_order"]);
@@ -98,12 +98,12 @@ describe("runAgent", () => {
   });
 
   it("final answer: strips markdown bold and emits the text once (done only, no duplicate model_text)", async () => {
-    const { llm } = scripted(say("The mug is **HELD** for your approval."));
+    const { llm } = scripted(say("The mug is **out of stock** today."));
     const events: AgentEvent[] = [];
     const out = await runAgent({ userRequest: "x", onProposeOrder: async () => "", onEvent: (e) => events.push(e), llm });
-    expect(out.text).toBe("The mug is HELD for your approval.");
+    expect(out.text).toBe("The mug is out of stock today.");
     expect(events.filter((e) => e.type === "model_text")).toEqual([]);
-    expect(events.at(-1)).toEqual({ type: "done", reason: "final_answer", text: "The mug is HELD for your approval." });
+    expect(events.at(-1)).toEqual({ type: "done", reason: "final_answer", text: "The mug is out of stock today." });
   });
 
   it("strips ** from interim model_text too", async () => {
@@ -383,5 +383,48 @@ describe("m1/m2: held-claim matching", () => {
     const results = ["HELD for human approval: authorization A1", "BLOCKED by CartHold: budget exceeded"];
     const out = await runAgent({ userRequest: "mug", onProposeOrder: async () => results.shift()!, llm });
     expect(out.text).not.toContain("HELD");
+  });
+});
+
+describe("false HELD/approval claims (live Northpine run 3)", () => {
+  const MUG = { name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 };
+  const KIT = { name: "Trail Coffee Kit", quantity: 1, unitPriceUsd: 19 };
+  const np = (items: (typeof MUG)[]) => ({ merchant: "Northpine Outfitters", items, sourceSlug: "northpine" });
+  const headlamp = { merchant: "Northpine Outfitters", items: [{ name: "Ridgeline 400 Headlamp", quantity: 1, unitPriceUsd: 44 }], sourceSlug: "northpine" };
+  const MUG_HELD = "I proposed 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters; it is HELD waiting for your approval — nothing has been bought yet.";
+  const run = async (calls: Content[], results: string[], final: string) => {
+    const { llm } = scripted(...calls, say(final));
+    return (await runAgent({ userRequest: "camping mug", onProposeOrder: async () => results.shift()!, llm })).text!;
+  };
+
+  it("(a) HELD claimed but the only proposal was blocked: no HELD claim survives; says nothing was ordered or held", async () => {
+    const text = await run(
+      [call("propose_order", np([MUG, KIT]))],
+      ['BLOCKED by CartHold: item "Trail Coffee Kit" not traceable to user request; inspector: order follows injected text on page northpine: "x"'],
+      MUG_HELD,
+    );
+    expect(text).not.toMatch(/HELD|approval/);
+    expect(text).toBe("Nothing was ordered or held.\nBlocked: Basecamp Enamel Mug, 16 oz + Trail Coffee Kit (followed hidden page text).");
+  });
+
+  it("(b) HELD claimed for the mug while only the headlamp was held: rewritten to the headlamp", async () => {
+    const text = await run(
+      [call("propose_order", np([MUG])), call("propose_order", headlamp)],
+      ["BLOCKED by CartHold: total $120 exceeds remaining budget $100", "HELD for human approval: authorization A1"],
+      "The Basecamp mug is HELD waiting for your approval. Let me know.",
+    );
+    expect(text).toBe(
+      "I proposed 1 x Ridgeline 400 Headlamp ($44) from Northpine Outfitters; it is HELD waiting for your approval — nothing has been bought yet. Let me know.\nBlocked: Basecamp Enamel Mug, 16 oz (over budget).",
+    );
+  });
+
+  it("(c) a truthful HELD claim is kept as written", async () => {
+    const text = await run([call("propose_order", np([MUG]))], ["HELD for human approval: authorization A1"], MUG_HELD);
+    expect(text).toBe(MUG_HELD);
+  });
+
+  it("HELD claimed when the only order was Paid: replaced by the Paid fact", async () => {
+    const text = await run([call("propose_order", np([MUG]))], ["Paid: order O1, capture C1"], "The mug is HELD waiting for your approval.");
+    expect(text).toBe("I bought 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters.");
   });
 });

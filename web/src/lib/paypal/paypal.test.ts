@@ -55,12 +55,16 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("client", () => {
-  it("uses sandbox base by default and for SANDBOX, live for LIVE", () => {
+  it("is sandbox-only: SANDBOX/default use the sandbox host, LIVE and PRODUCTION are refused", () => {
+    delete process.env.PAYPAL_ENVIRONMENT;
     expect(baseUrl()).toBe("https://api-m.sandbox.paypal.com");
     process.env.PAYPAL_ENVIRONMENT = "SANDBOX";
     expect(baseUrl()).toBe("https://api-m.sandbox.paypal.com");
-    process.env.PAYPAL_ENVIRONMENT = "LIVE";
-    expect(baseUrl()).toBe("https://api-m.paypal.com");
+    for (const env of ["LIVE", "production"]) {
+      process.env.PAYPAL_ENVIRONMENT = env;
+      expect(() => baseUrl()).toThrow(/sandbox-only/);
+    }
+    delete process.env.PAYPAL_ENVIRONMENT;
   });
 
   it("caches the token until expiry and sends Basic auth", async () => {
@@ -108,6 +112,37 @@ describe("orders", () => {
     const h = create.init.headers as Record<string, string>;
     expect(h["PayPal-Request-Id"]).toBe("req-1");
     expect(h.Authorization).toBe("Bearer TOKEN");
+  });
+
+  it("payer flow: payment_source.paypal with experience_context, no card, returns the payer-action link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        if (new URL(url).pathname === "/v1/oauth2/token") return json({ access_token: "TOKEN", expires_in: 32400 });
+        // Shape verified against the sandbox 2026-10-31 (PAYER_ACTION_REQUIRED + rel "payer-action").
+        return json({ id: "ORDER3", status: "PAYER_ACTION_REQUIRED", links: [{ rel: "self", href: "https://api-m.sandbox.paypal.com/v2/checkout/orders/ORDER3" }, { rel: "payer-action", href: "https://www.sandbox.paypal.com/checkoutnow?token=ORDER3" }] }, 200);
+      }),
+    );
+    const payer = { returnUrl: "https://app.example/demo/paypal-return?run=r&row=d1", cancelUrl: "https://app.example/demo/paypal-return?run=r&row=d1&cancelled=1" };
+    const r = await createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant, { requestId: "g1-d1-auth", payer });
+    expect(r).toEqual({ id: "ORDER3", status: "PAYER_ACTION_REQUIRED", approveUrl: "https://www.sandbox.paypal.com/checkoutnow?token=ORDER3" });
+    expect(calls).toHaveLength(2); // token + one create: no card attempt, no fallback
+    const body = JSON.parse(calls[1].init.body as string);
+    expect(body.intent).toBe("AUTHORIZE");
+    expect(body.purchase_units[0].description).toBe("CartHold: Northpine Outfitters");
+    expect(body.payment_source).toEqual({
+      paypal: {
+        experience_context: {
+          brand_name: "CartHold",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "PAY_NOW",
+          return_url: payer.returnUrl,
+          cancel_url: payer.cancelUrl,
+        },
+      },
+    });
+    expect((calls[1].init.headers as Record<string, string>)["PayPal-Request-Id"]).toBe("g1-d1-auth");
   });
 
   it("falls back to approve link when card payment_source is rejected", async () => {

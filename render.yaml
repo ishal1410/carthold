@@ -31,5 +31,9 @@ services:
         value: "200"
       - key: NEXT_MANUAL_SIG_HANDLE # next start skips its own SIGTERM exit, so session.ts can void held PayPal authorizations first (next/dist/server/lib/start-server.js)
         value: "1"
+      - key: PAYPAL_HOLD_PAYER # held orders: "paypal" = the buyer approves each one in PayPal (default); "card" = instant fallback to the sandbox test card if sandbox buyer approval breaks
+        value: paypal
       - key: PUBLIC_ORIGIN # set after the first deploy to https://<service>.onrender.com (no trailing slash)
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID # id printed by web/scripts/paypal-webhook-register.mts (not a secret); unset = /api/paypal/webhook answers 503
         sync: false

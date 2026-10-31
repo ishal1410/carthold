@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stores } from "../../data/stores";
 import { describeApprovalRule, evaluate, type Mandate, type ProposedOrder } from "./policy";
 
 // Demo mandate: $150 budget, $60/item cap, approve above $25.
@@ -234,6 +235,82 @@ describe("FINDINGS #27: in-mandate poisoned add-on", () => {
     const d = evaluate(m, order({ merchant: "Northpine Outfitters", items: [mug, kit] }), 0);
     expect(d.verdict).toBe("block");
     expect(d.reasons).toEqual(['item "Trail Coffee Kit" not traceable to user request']);
+  });
+});
+
+describe("catalog kinds: the request names what the item IS", () => {
+  const traced = (userRequest: string, name: string) =>
+    !evaluate({ ...mandate, userRequest, perItemCapUsd: 1000, approvalThresholdUsd: 1000 }, order({ items: [{ name, quantity: 1, unitPriceUsd: 20 }] }), 0)
+      .reasons.some((r) => r.startsWith(`item "${name}" not traceable`));
+  const blend = "Morning Ritual Blend, 12 oz";
+
+  it("live false block (2026-10-31): 'a bag of coffee beans' traces Morning Ritual Blend and the order allows", () => {
+    const m = { ...mandate, userRequest: "Buy me a bag of coffee beans from Brew & Bean", merchantAllowlist: ["Brew & Bean"] };
+    const d = evaluate(m, order({ merchant: "Brew & Bean", items: [{ name: blend, quantity: 1, unitPriceUsd: 18 }] }), 0);
+    expect(d).toEqual({ verdict: "allow", reasons: [], amountUsd: 18 });
+  });
+
+  it("decided ambiguous cases: 'ground coffee' traces the blend, bare 'coffee' does not (it also modifies mug/kit/card)", () => {
+    expect(traced("some ground coffee", blend)).toBe(true);
+    expect(traced("buy me coffee from Brew & Bean", blend)).toBe(false);
+    expect(traced("a coffee mug from Brew & Bean", blend)).toBe(false); // "bean" from the store name is not "coffee beans"
+  });
+
+  it("quantity comes from the words before the kind", () => {
+    const m = { ...mandate, userRequest: "two bags of coffee beans", merchantAllowlist: ["brew-and-bean"], approvalThresholdUsd: 100 };
+    const line = (q: number) => order({ merchant: "brew-and-bean", items: [{ name: blend, quantity: q, unitPriceUsd: 18 }] });
+    expect(evaluate(m, line(2), 0).verdict).toBe("allow");
+    expect(evaluate(m, line(3), 0).reasons.join()).toMatch(/quantity 3 not traceable to user request \(asked for 2\)/);
+  });
+
+  it("doubt review: a size ('12 oz') or another item's count ('3 mugs and') is not the quantity", () => {
+    const m = (userRequest: string) => ({ ...mandate, userRequest, merchantAllowlist: ["brew-and-bean"], maxQuantity: 20, budgetUsd: 1000, perItemCapUsd: 100, approvalThresholdUsd: 1000 });
+    const line = (q: number) => order({ merchant: "brew-and-bean", items: [{ name: blend, quantity: q, unitPriceUsd: 18 }] });
+    expect(evaluate(m("Buy 12 oz coffee beans"), line(12), 0).reasons.join()).toMatch(/asked for 1\)/);
+    expect(evaluate(m("Buy 3 mugs and coffee beans"), line(3), 0).reasons.join()).toMatch(/asked for 1\)/);
+    expect(evaluate(m("Buy 2 bags of coffee beans"), line(2), 0).verdict).toBe("allow");
+  });
+
+  it("a renamed (non-catalog) item gets no kind", () => {
+    expect(traced("a bag of coffee beans", "Ritual Morning Blend")).toBe(false);
+  });
+
+  it("ATTACK still blocked: 'camping coffee mug' names kind mug, not coffee kit", () => {
+    expect(traced("Buy me a camping coffee mug under $40", "Trail Coffee Kit")).toBe(false);
+    expect(traced("Buy me a camping coffee mug under $40", blend)).toBe(false);
+  });
+
+  it("ATTACK still blocked: a gift card request does not trace the Sister-Gift Bundle lures", () => {
+    expect(traced("Buy a $25 gift card", "Sister-Gift Bundle")).toBe(false);
+    expect(traced("Buy a $25 gift card", "Sister-Gift Bundle, $25 today")).toBe(false);
+    const m = { ...mandate, userRequest: "Get a small gift card for my sister, under $40", merchantAllowlist: ["Giftlane Deals"] };
+    const d = evaluate(m, order({ merchant: "Giftlane Deals", items: [{ name: "Sister-Gift Bundle", quantity: 10, unitPriceUsd: 100 }] }), 0);
+    expect(d.verdict).toBe("block");
+  });
+
+  it.each([
+    ["an enamel mug", "Basecamp Enamel Mug, 16 oz"],
+    ["a headlamp for night hikes", "Ridgeline 400 Headlamp"],
+    ["hiking socks", "Merino Trail Socks, 2 pack"],
+    ["a coffee kit for the trail", "Trail Coffee Kit"],
+    ["a bag of coffee beans", blend],
+    ["a pour over for my desk", "Ceramic Pour-Over Cone"],
+    ["a coffee sampler", "Single-Origin Sampler, 3 x 4 oz"],
+    ["a $25 gift card", "Universal e-Gift Card, $25 (sold out)"],
+    ["a spa gift for mom", "Spa Day e-Gift"],
+    ["a gift bundle", "Sister-Gift Bundle"],
+    ["cheap earbuds", "Pulse Buds Pro, refurbished"],
+    ["a usb charger", "65W USB-C GaN Charger"],
+    ["a webcam for calls", "4K Webcam with Mic"],
+  ])("benign: %s traces %s", (req, name) => {
+    expect(traced(req, name)).toBe(true);
+  });
+
+  it("every catalog product has a kind and no two products share one (a shared kind would let one item swap for another)", () => {
+    const all = stores.flatMap((s) => [s.featured, ...s.more]);
+    expect(all.every((p) => p.kinds.length > 0)).toBe(true);
+    const flat = all.flatMap((p) => p.kinds.map((k) => k.toLowerCase()));
+    expect(new Set(flat).size).toBe(flat.length);
   });
 });
 

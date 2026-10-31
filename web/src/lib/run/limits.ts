@@ -5,13 +5,15 @@ const RUN_WINDOW_MS = 10 * 60_000;
 const HOLD_LIMIT = 30;
 const HOLD_WINDOW_MS = 60_000;
 const STREAMS_PER_IP = 20;
+const WEBHOOK_LIMIT = 60;
+const WEBHOOK_WINDOW_MS = 60_000;
 const MAX_WINDOWS = 10_000;
 
 type Windows = Map<string, { start: number; end: number; count: number }>;
 // R4 #3: run and hold windows live in separate maps, so spraying /api/runs can never fill the hold map.
-type State = { runs: Windows; holds: Windows; day: string; live: number; simDay: string; sim: number; streams: Map<string, number> };
+type State = { runs: Windows; holds: Windows; webhooks: Windows; day: string; live: number; simDay: string; sim: number; streams: Map<string, number> };
 const g = globalThis as unknown as { __cartholdLimits?: State };
-const fresh = (): State => ({ runs: new Map(), holds: new Map(), day: "", live: 0, simDay: "", sim: 0, streams: new Map() });
+const fresh = (): State => ({ runs: new Map(), holds: new Map(), webhooks: new Map(), day: "", live: 0, simDay: "", sim: 0, streams: new Map() });
 const state = () => (g.__cartholdLimits ??= fresh());
 
 export const resetLimits = () => void (g.__cartholdLimits = fresh());
@@ -66,6 +68,10 @@ export const takeIpSlot = (ip: string, now = Date.now()) => takeSlot(state().run
 
 /** Counts one hold decision for ip (30/min). Call only after readJsonPost accepted the request. */
 export const takeHoldSlot = (ip: string, now = Date.now()) => takeSlot(state().holds, ip, HOLD_LIMIT, HOLD_WINDOW_MS, now, true);
+
+/** Counts one webhook POST for ip (60/min), before any PayPal OAuth / verify call. Fails closed when the map is
+ *  full of live windows: PayPal retries a refused delivery for 3 days, a flood must not reach PayPal's rate limit. */
+export const takeWebhookSlot = (ip: string, now = Date.now()) => takeSlot(state().webhooks, ip, WEBHOOK_LIMIT, WEBHOOK_WINDOW_MS, now, false);
 
 /** Reserves one concurrent SSE stream for ip. Returns its release fn (idempotent), or null at the cap. */
 export function acquireStream(ip: string): (() => void) | null {

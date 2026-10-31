@@ -3,7 +3,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { runAgent, type AgentEvent, type RunAgentOptions } from "../agent/agent";
-import { createGuard, type Guard, type GuardOptions, type GuardState } from "../guard/guard";
+import { createGuard, type Guard, type GuardOptions, type GuardState, type PayPalEvent } from "../guard/guard";
+import { sweepOrphanedHolds } from "../paypal/webhook";
 import { type Mandate } from "../policy/policy";
 import { runRedteam } from "../redteam/redteam";
 
@@ -51,6 +52,8 @@ export type RunDeps = {
   resolveEveryMs?: number;
   /** Clock for the unresolvable-row TTL (default Date.now). */
   now?: () => number;
+  /** Crash recovery, once per process on the first createRun (default: lib/paypal/webhook sweepOrphanedHolds). */
+  sweepOrphans?: (o: { bootAt: number; isKnown: (authId: string) => boolean }) => Promise<unknown>;
 };
 
 /** Thrown by createRun when every stored run is still running or has a pending hold. */
@@ -62,9 +65,12 @@ export class RunsFullError extends Error {
 
 const defaultDeps: RunDeps = {
   runners: { live: (o) => runAgent({ ...o, persona: "realistic" }), redteam: runRedteam },
+  sweepOrphans: sweepOrphanedHolds,
 };
 
-const g = globalThis as unknown as { __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps; __cartholdShuttingDown?: boolean };
+const g = globalThis as unknown as {
+  __cartholdRuns?: Map<string, Run>; __cartholdDeps?: RunDeps; __cartholdShuttingDown?: boolean; __cartholdOrphanSweep?: boolean;
+};
 const runs = (g.__cartholdRuns ??= new Map());
 const MAX_RUNS = 100; // ponytail: in-memory, a real store if runs must outlive the process
 /** A run whose only open money is guard-flagged "unresolvable" unknown rows is evictable this long after it ended (R3 #5). */
@@ -81,7 +87,22 @@ export const resetRuns = () => {
   for (const r of runs.values()) clearInterval(r.resolveTimer);
   runs.clear();
   g.__cartholdShuttingDown = false;
+  g.__cartholdOrphanSweep = false;
 }; // test seam
+
+/**
+ * Holds live only in memory, so a crash / OOM orphans them. On the first run of a new process, void CartHold
+ * authorizations made before this process booted that no run knows (sweepOrphanedHolds reads PayPal's event log).
+ * ponytail: triggered by the first run, not at boot (instrumentation stays free of server-only PayPal imports), so
+ * an orphan waits for the next visitor; a boot hook in instrumentation-node.ts would close that gap.
+ */
+function kickOrphanSweep(d: RunDeps) {
+  if (g.__cartholdOrphanSweep || !d.sweepOrphans) return;
+  g.__cartholdOrphanSweep = true;
+  const bootAt = Date.now() - process.uptime() * 1000;
+  const isKnown = (authId: string) => [...runs.values()].some((r: Run) => r.guard.getState().rows.some((row) => row.authorizationId === authId));
+  void d.sweepOrphans({ bootAt, isKnown }).catch((e) => console.error("orphaned-hold sweep failed:", e));
+}
 
 const unknownRowIds = (state: GuardState) => state.rows.filter((r) => r.status === "unknown").map((r) => r.id);
 // Feature-detected: guard flags rows it gave up resolving in state.unresolvable (R3 #5).
@@ -93,14 +114,14 @@ const pollableIds = (state: GuardState) => {
 };
 
 /**
- * Nothing left that can change: agent finished, no row "pending" or "held" (by status, not by hold timer: approve
+ * Nothing left that can change: agent finished, no row "pending", "held" or "awaiting_payer" (by status, not by hold timer: approve
  * clears the timer before its capture returns, B7), no "unknown" money still being polled. Unresolvable unknown
  * rows are never polled again, so they cannot change either (B12). Streams may close.
  */
 export function isSettled(run: Run): boolean {
   const s = run.guard.getState();
   const polled = new Set(pollableIds(s));
-  return run.ended && s.pendingHolds.length === 0 && !s.rows.some((r) => r.status === "held" || r.status === "pending" || polled.has(r.id));
+  return run.ended && s.pendingHolds.length === 0 && !s.rows.some((r) => r.status === "held" || r.status === "pending" || r.status === "awaiting_payer" || polled.has(r.id));
 }
 
 /** Settled, and any unknown (hence unresolvable) money has sat for UNRESOLVABLE_TTL_MS since the run ended. */
@@ -166,20 +187,38 @@ export function isOwner(run: Run, token: string | null | undefined): boolean {
 }
 
 /**
+ * "Approve with PayPal" return/cancel URLs for a hold row, or undefined for the sandbox-card hold path.
+ * PAYPAL_HOLD_PAYER = "paypal" (default) | "card": the card value is the instant fallback if sandbox buyer approval
+ * breaks. No origin (a caller outside the HTTP route): card path, since PayPal needs absolute return URLs.
+ */
+export function payerUrlsFor(runId: string, origin: string | undefined) {
+  if ((process.env.PAYPAL_HOLD_PAYER ?? "paypal").trim().toLowerCase() === "card" || !origin) return undefined;
+  return (rowId: string) => {
+    const back = `${origin}/demo/paypal-return?${new URLSearchParams({ run: runId, row: rowId })}`;
+    return { returnUrl: back, cancelUrl: `${back}&cancelled=1` };
+  };
+}
+
+/**
  * Input must already be validated with CreateRunSchema. Starts the run in the background.
  * ownerToken is returned exactly once; the run keeps only its sha256.
+ * `origin` (e.g. https://carthold.example): where PayPal sends the buyer back after approving a hold.
  */
-export function createRun(input: CreateRunInput): { run: Run; ownerToken: string } {
+export function createRun(input: CreateRunInput, { origin }: { origin?: string } = {}): { run: Run; ownerToken: string } {
   const d = deps();
   if (g.__cartholdShuttingDown || (runs.size >= (d.maxRuns ?? MAX_RUNS) && !evictOne())) throw new RunsFullError();
   const mandate: Mandate = { ...DEFAULT_MANDATE, userRequest: input.userRequest };
+  const id = crypto.randomUUID();
   // B1: Simulated runs are scripted, so the inspector stays regex-only (null) unless a test injects an llm.
-  const guard = createGuard({ mandate, ...d.guard, llm: d.guard?.llm ?? (input.mode === "redteam" ? null : undefined) });
+  const guard = createGuard({
+    mandate, ...d.guard, llm: d.guard?.llm ?? (input.mode === "redteam" ? null : undefined), payerUrls: payerUrlsFor(id, origin),
+  });
   const ownerToken = randomBytes(32).toString("base64url");
   const run: Run = {
-    id: crypto.randomUUID(), mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken),
+    id, mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken),
   };
   runs.set(run.id, run);
+  kickOrphanSweep(d);
   // Feature-detected: guard.notePageRead lands with the guard's page-provenance fix (FINDINGS #2).
   const notePageRead = (guard as { notePageRead?: (slug: string) => void }).notePageRead;
 
@@ -224,10 +263,16 @@ export function subscribeRun(run: Run, listener: (m: StreamMsg) => void): () => 
   return unsubscribe;
 }
 
+/** A verified PayPal webhook event, offered to every run's guard (ids are unique, so at most one row matches). */
+export async function applyPayPalEvent(e: PayPalEvent): Promise<boolean> {
+  const changed = await Promise.all([...runs.values()].map((r: Run) => r.guard.applyPayPalEvent(e)));
+  return changed.some(Boolean);
+}
+
 /**
  * Voids every pending hold in every run (shutdown sweep, B3). Waits at most capMs; never throws.
  * ponytail: best-effort only. A crash or kill -9 still orphans holds; PayPal's own authorization expiry is the
- * backstop. Real fix = persisted holds that a fresh process re-arms or voids (planned).
+ * backstop until kickOrphanSweep (next process, first run) voids them from PayPal's event log.
  */
 export async function voidAllHolds(capMs = 8_000): Promise<void> {
   g.__cartholdShuttingDown = true; // m6: createRun refuses and proposals are blocked from here on

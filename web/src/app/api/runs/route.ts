@@ -19,7 +19,9 @@ export async function POST(req: Request) {
   if (!live && !takeSimulatedSlot())
     return fail(429, "daily demo limit reached, try the recorded run at /demo?fixture=1 or come back tomorrow");
   try {
-    const { run, ownerToken } = createRun(parsed.data);
+    // PayPal sends the buyer back here after approving a hold. PUBLIC_ORIGIN when set (behind Render / Cloudflare).
+    const origin = process.env.PUBLIC_ORIGIN?.trim().replace(/\/+$/, "") || new URL(req.url).origin;
+    const { run, ownerToken } = createRun(parsed.data, { origin });
     return json({ runId: run.id, ownerToken }, 201);
   } catch (e) {
     if (e instanceof RunsFullError) {

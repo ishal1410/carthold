@@ -9,6 +9,13 @@
 //    POST /v2/payments/authorizations/{id}/capture | /void
 //  - Idempotency https://developer.paypal.com/api/rest/reference/idempotency/
 //    PayPal-Request-Id: UUID recommended (38-char limit), unique per request AND per call type.
+//  - Buyer approval (Orders v2 spec, components.schemas.paypal_wallet_experience_context):
+//    return_url "The URL where the customer will be redirected upon approving a payment."
+//    cancel_url "The URL where the customer will be redirected upon cancelling the payment approval."
+//    user_action PAY_NOW: "Use this option when the final amount is known when the checkout is initiated".
+//    shipping_preference NO_SHIPPING: "Removes the shipping address information from the API response and the Paypal site."
+//    Order status PAYER_ACTION_REQUIRED: "Redirect the payer to the \"rel\":\"payer-action\" HATEOAS link returned as
+//    part of the response prior to authorizing or capturing the order."
 import "server-only";
 import { PayPalError, paypalFetch } from "./client";
 
@@ -23,6 +30,8 @@ export type OrderResult = {
   /** Set only on the fallback path: buyer must approve in a browser before authorize. */
   approveUrl?: string;
 };
+/** Buyer-approval redirect targets (absolute URLs on this app). */
+export type PayerUrls = { returnUrl: string; cancelUrl: string };
 export type CaptureResult = { id: string; status: string };
 export type VoidResult = { authorizationId: string; status: string };
 
@@ -80,11 +89,14 @@ function toResult(o: RawOrder): OrderResult {
  * payer-action link as `approveUrl`.
  *
  * `requestId` defaults to a fresh UUID; pass a stable one to make retries of the same call idempotent.
+ *
+ * `payer`: no card at all. payment_source.paypal makes PayPal answer PAYER_ACTION_REQUIRED with a payer-action link
+ * (returned as `approveUrl`); the buyer approves there, PayPal redirects to returnUrl, then authorizeOrder(id).
  */
 export async function createAuthorizeOrder(
   items: CartItem[],
   merchant: Merchant,
-  opts: { requestId?: string; cardName?: string } = {},
+  opts: { requestId?: string; cardName?: string; payer?: PayerUrls } = {},
 ): Promise<OrderResult> {
   if (items.length === 0) throw new Error("createAuthorizeOrder: no items");
   for (const i of items) {
@@ -93,6 +105,20 @@ export async function createAuthorizeOrder(
   }
   const unit = purchaseUnit(items, merchant);
   const requestId = opts.requestId ?? crypto.randomUUID();
+  if (opts.payer) {
+    const experience_context = {
+      brand_name: "CartHold",
+      shipping_preference: "NO_SHIPPING",
+      user_action: "PAY_NOW",
+      return_url: opts.payer.returnUrl,
+      cancel_url: opts.payer.cancelUrl,
+    };
+    const order = await paypalFetch<RawOrder>("/v2/checkout/orders", {
+      requestId,
+      body: { intent: "AUTHORIZE", purchase_units: [unit], payment_source: { paypal: { experience_context } } },
+    });
+    return toResult(order);
+  }
   try {
     const order = await paypalFetch<RawOrder>("/v2/checkout/orders", {
       requestId,

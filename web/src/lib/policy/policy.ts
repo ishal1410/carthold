@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stores } from "../../data/stores";
 
 // Deterministic policy engine. No LLM, no I/O: same input, same Decision.
 
@@ -67,20 +68,48 @@ function traceable(request: string[], itemName: string): boolean {
   return want.length > 0 && (hit(want[want.length - 1]) || want.filter(hit).length * 2 >= want.length);
 }
 
-/** Quantity the user asked for next to a matched keyword (looks back 3 tokens), or null if the item isn't mentioned. */
+const CONJUNCTIONS = new Set(["and", "or", "plus", "with", "also"]);
+/**
+ * Quantity stated in the 3 tokens before request[i] ("two bags of coffee"), default 1. Stops at a conjunction so
+ * "3 mugs and coffee beans" doesn't give the beans 3, and skips sizes ("12 oz"). "$40" keeps its "$", so prices never count.
+ * ponytail: tokenize drops punctuation, so "3 mugs, coffee beans" still reads 3; track separators if that matters.
+ */
+function quantityBefore(request: string[], i: number): number {
+  for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+    const prev = request[j];
+    if (CONJUNCTIONS.has(prev)) break;
+    if (/^\d+$/.test(prev) && !UNITS.has(request[j + 1])) return Number(prev);
+    if (prev in NUMBER_WORDS && !UNITS.has(request[j + 1])) return NUMBER_WORDS[prev];
+  }
+  return 1;
+}
+
+/** Quantity the user asked for next to a matched keyword, or null if the item isn't mentioned. */
 function requestedQuantity(request: string[], itemName: string): number | null {
   const want = keywords(itemName);
   let found: number | null = null;
   request.forEach((tok, i) => {
     const s = stem(tok);
-    if (!/^[a-z]{3,}$/.test(s) || !want.some((w) => sameWord(s, w))) return;
-    let qty = 1;
-    for (const prev of request.slice(Math.max(0, i - 3), i)) {
-      if (/^\d+$/.test(prev)) qty = Number(prev); // "$40" keeps its "$", so prices never count
-      else if (prev in NUMBER_WORDS) qty = NUMBER_WORDS[prev];
-    }
-    found = Math.max(found ?? 0, qty);
+    if (/^[a-z]{3,}$/.test(s) && want.some((w) => sameWord(s, w))) found = Math.max(found ?? 0, quantityBefore(request, i));
   });
+  return found;
+}
+
+// Catalog name -> what the item IS ("Morning Ritual Blend, 12 oz" -> "coffee beans"). Keyed by exact catalog name, so
+// a renamed or invented item gets no kind (guard's catalog check blocks those anyway).
+const KINDS = new Map(stores.flatMap((s) => [s.featured, ...s.more]).map((p) => [p.name.toLowerCase(), p.kinds.map((k) => tokenize(k).map(stem))]));
+
+/**
+ * Quantity the user asked for next to the item's catalog kind, or null if no kind is named. The WHOLE kind phrase must
+ * appear as consecutive whole words: "camping coffee mug" names "mug", not "coffee kit" or "coffee beans".
+ */
+function kindQuantity(request: string[], itemName: string): number | null {
+  const stems = request.map(stem);
+  let found: number | null = null;
+  for (const kind of KINDS.get(itemName.trim().toLowerCase()) ?? [])
+    stems.forEach((_, i) => {
+      if (kind.length && kind.every((w, j) => stems[i + j] === w)) found = Math.max(found ?? 0, quantityBefore(request, i));
+    });
   return found;
 }
 
@@ -134,7 +163,10 @@ export function evaluate(mandate: Mandate, rawOrder: ProposedOrder, spentSoFarUs
     if (quantity > mandate.maxQuantity) blocks.push(`"${name}" quantity ${quantity} exceeds max quantity ${mandate.maxQuantity}`);
 
     // Provenance: what is bought, how many, and at what price must come from the user's words, not the page.
-    const asked = traceable(request, name) ? requestedQuantity(request, name) : null;
+    // Either the item's own name words or its catalog kind ("coffee beans") must come from the user.
+    const byName = traceable(request, name) ? requestedQuantity(request, name) : null;
+    const byKind = kindQuantity(request, name);
+    const asked = byName === null ? byKind : Math.max(byName, byKind ?? 0);
     if (asked === null) blocks.push(`item "${name}" ${NOT_TRACEABLE}`);
     else if (quantity > asked) blocks.push(`"${name}" quantity ${quantity} ${NOT_TRACEABLE} (asked for ${asked})`);
   }

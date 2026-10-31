@@ -1,5 +1,5 @@
 "use client";
-import { Check, ChevronDown, ScanEye, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, ScanEye, TriangleAlert, Wallet, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 import type { DecisionRow, GuardState } from "@/lib/guard/guard";
@@ -80,13 +80,13 @@ function Warnings({ reasons }: { reasons: string[] }) {
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Radial countdown to the hold's auto-void. The ring empties; the last 30s turn coral. */
-function CountdownRing({ left }: { left: number }) {
+function CountdownRing({ left, verb = "auto-void" }: { left: number; verb?: string }) {
   const reduce = useReducedMotion();
   const mm = Math.floor(left / 60_000);
   const ss = String(Math.floor((left % 60_000) / 1000)).padStart(2, "0");
   const urgent = left < 30_000;
   return (
-    <div className="relative size-24 shrink-0 sm:size-28 md:size-32" role="img" aria-label={left > 0 ? `Auto-voids in ${mm} minutes ${ss} seconds` : "Expired, voiding"}>
+    <div className="relative size-24 shrink-0 sm:size-28 md:size-32" role="img" aria-label={left > 0 ? `${verb === "expire" ? "Expires" : "Auto-voids"} in ${mm} minutes ${ss} seconds` : "Expired"}>
       <svg viewBox="0 0 120 120" className="size-full -rotate-90" aria-hidden>
         <circle cx="60" cy="60" r="52" fill="none" stroke="var(--line-strong)" strokeWidth="3" />
         <motion.circle
@@ -104,13 +104,14 @@ function CountdownRing({ left }: { left: number }) {
       </svg>
       <div aria-hidden className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={cx("figures text-xl font-medium", urgent ? "text-blocked" : "text-ink")}>{left > 0 ? `${mm}:${ss}` : "0:00"}</span>
-        <span className="text-2xs text-ink-faint">{left > 0 ? "to auto-void" : "voiding"}</span>
+        <span className="text-2xs text-ink-faint">{left > 0 ? `to ${verb}` : verb === "expire" ? "expired" : "voiding"}</span>
       </div>
     </div>
   );
 }
 
-type Decide = (row: DecisionRow, a: "approve" | "reject") => void;
+/** approve = release (capture), reject = cancel (void, or drop an order the buyer has not approved), paypal = open PayPal. */
+export type Decide = (row: DecisionRow, a: "approve" | "reject" | "paypal") => void;
 
 /** The open hold: the one thing on this screen that needs a human. */
 function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
@@ -125,7 +126,8 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
   const reduce = useReducedMotion();
   const left = row.expiresAt && now ? Math.max(0, new Date(row.expiresAt).getTime() - now) : HOLD_MS;
   const why = reasonTags(row.reasons);
-  const plain = orderReasons(row.reasons).filter((r) => !isWarning(r));
+  const plain = orderReasons(row.reasons).filter((r) => !isWarning(r) && !/^buyer approved in PayPal$/.test(r));
+  const payer = row.status === "awaiting_payer";
   return (
     <Reveal variant="stamp" inView={false} className="relative">
       {!reduce && (
@@ -138,14 +140,14 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
           transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
         />
       )}
-      <Panel as="article" tone="hold" aria-label={`Held: ${usd(row.amountUsd)} at ${row.merchant}`}>
+      <Panel as="article" tone="hold" aria-label={`${payer ? "Waiting for PayPal approval" : "Held"}: ${usd(row.amountUsd)} at ${row.merchant}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status="hold" label="Held for you" />
+          <StatusPill status="hold" label={payer ? "Waiting for PayPal approval" : "Held for you"} />
           {simulated && <Badge tone="hold">Simulated</Badge>}
         </div>
         {viewOnly && (
           <p className="mt-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-ink">
-            View only. Only the tab that started this run can approve or reject it.
+            View only. Only the tab that started this run can approve, release or cancel it.
           </p>
         )}
         <div className="mt-5 flex items-start justify-between gap-5">
@@ -154,23 +156,31 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
             <p className="mt-3 font-display text-xl font-semibold tracking-tight text-ink">{row.merchant}</p>
             <p className="mt-0.5 text-sm text-ink-muted [overflow-wrap:anywhere]">{row.items}</p>
           </div>
-          <CountdownRing left={left} />
+          <CountdownRing left={left} verb={payer ? "expire" : "auto-void"} />
         </div>
         <div className="mt-5 space-y-2.5 border-t border-line pt-4">
           <p className="text-sm text-ink-muted">
-            Authorized with PayPal, not taken. If nobody decides, the authorization voids itself.
+            {payer
+              ? "Nothing is held yet. Approve the payment as the buyer in PayPal; CartHold then authorizes it and you release or cancel it. If nobody approves, it expires."
+              : "Authorized with PayPal, not taken. Release it to pay, or cancel. If nobody decides, the authorization voids itself."}
           </p>
           {why.length ? <Tags tags={why} tone="hold" /> : plain.map((r) => <p key={r} className="text-xs text-ink-muted">{plainReason(r)}</p>)}
           <Warnings reasons={row.reasons} />
         </div>
         <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <Button variant="approve" size="lg" icon={<Check strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "approve")}>
-            {busy ? "Working" : `Approve ${usd(row.amountUsd)}`}
-          </Button>
+          {payer ? (
+            <Button variant="approve" size="lg" icon={<Wallet strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "paypal")}>
+              {busy ? "Working" : "Approve with PayPal"}
+            </Button>
+          ) : (
+            <Button variant="approve" size="lg" icon={<Check strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "approve")}>
+              {busy ? "Working" : `Release ${usd(row.amountUsd)}`}
+            </Button>
+          )}
           <Button variant="ghost" size="lg" disabled={busy || viewOnly} onClick={() => onDecide(row, "reject")} className="max-sm:px-4">
             <span className="inline-flex items-center gap-1.5">
               <X aria-hidden strokeWidth={1.75} className="size-4" />
-              Reject
+              Cancel
             </span>
           </Button>
         </div>
@@ -207,12 +217,16 @@ const PILL: Record<string, { status: Status; label?: string }> = {
   voided: { status: "voided" },
   error: { status: "unknown", label: "PayPal error" },
   unknown: { status: "unknown", label: "Unclear" },
+  expired: { status: "voided", label: "Expired" },
+  cancelled: { status: "voided", label: "Cancelled" },
 };
 
 /** The few words a collapsed verdict needs: why it was stopped, or how it settled. A view-only tab did not decide. */
 export function gist(row: DecisionRow, viewOnly = false): string {
   const who = viewOnly ? "the run's owner" : "you";
   if (row.status === "blocked") return hasInjection(row) ? "followed hidden text" : (reasonTags(row.reasons)[0] ?? plainReason(headline(row.reasons)));
+  if (row.status === "cancelled") return `cancelled by ${who}`;
+  if (row.status === "expired") return "PayPal approval timed out";
   if (row.reasons.includes("rejected by user")) return `rejected by ${who}`;
   if (row.reasons.some((r) => /^auto-voided/.test(r))) return "timed out";
   if (row.status === "captured") return row.verdict === "hold" ? `approved by ${who}` : "auto-paid, under limit";
@@ -310,8 +324,9 @@ export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecid
 }) {
   const now = useNow(guard.pendingHolds.length > 0);
   const newest = [...guard.rows].reverse();
-  const live = newest.filter((r) => r.status === "held" || r.status === "pending");
-  const settled = newest.filter((r) => r.status !== "held" && r.status !== "pending");
+  const isLive = (r: DecisionRow) => r.status === "held" || r.status === "pending" || r.status === "awaiting_payer";
+  const live = newest.filter(isLive);
+  const settled = newest.filter((r) => !isLive(r));
   return (
     <section aria-labelledby="verdict-h" className="flex flex-col gap-3">
       <h2 id="verdict-h" className="sr-only">
@@ -326,7 +341,7 @@ export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecid
       <ul className="flex flex-col gap-4" aria-live="polite">
         {live.map((r) => (
           <li key={r.id}>
-            {r.status === "held" ? (
+            {r.status === "held" || r.status === "awaiting_payer" ? (
               <HoldCard row={r} now={now} busy={!!busy[r.id]} simulated={simulated} viewOnly={viewOnly} onDecide={onDecide} />
             ) : (
               <PendingCard row={r} simulated={simulated} />

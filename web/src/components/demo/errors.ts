@@ -29,9 +29,9 @@ export function runStartError(status: number, serverMessage?: string): string {
 
 /**
  * Client copy of the server's isSettled (lib/run/session.ts) minus the run-ended check (m5): nothing left that can
- * change while no hold is pending, no row is held or pending, and every unknown row is one the guard gave up on.
+ * change while no hold is pending, no row is held, pending or awaiting PayPal approval, and every unknown row is one the guard gave up on.
  */
 export function runSettled(g: GuardState): boolean {
   const dead = new Set(g.unresolvable ?? []);
-  return g.pendingHolds.length === 0 && !g.rows.some((r) => r.status === "held" || r.status === "pending" || (r.status === "unknown" && !dead.has(r.id)));
+  return g.pendingHolds.length === 0 && !g.rows.some((r) => r.status === "held" || r.status === "pending" || r.status === "awaiting_payer" || (r.status === "unknown" && !dead.has(r.id)));
 }

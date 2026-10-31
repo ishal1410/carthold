@@ -6,6 +6,10 @@ import { acquireStream, clientIp } from "../../../../../lib/run/limits";
 const STREAMS_PER_RUN = 10;
 // Sent before we close a settled run's stream: EventSource would otherwise reconnect (~3s) and replay forever.
 const NO_RECONNECT = "retry: 86400000\n\n";
+/** m5: anyone with the run URL can watch; the payer-action link would let a viewer approve with their own PayPal
+ * account. Only the owner gets it, from GET /api/runs/:id/holds/:row with the Bearer token. */
+const forViewers = (m: StreamMsg): StreamMsg =>
+  m.kind === "guard" ? { ...m, state: { ...m.state, rows: m.state.rows.map((r) => ({ ...r, payerActionUrl: undefined })) } } : m;
 
 export async function GET(req: Request, ctx: { params: Promise<{ runId: string }> }) {
   await connection();
@@ -16,7 +20,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ runId: string }
   if (!release) return fail(429, "too many open streams from this address");
 
   const enc = new TextEncoder();
-  const frame = (m: StreamMsg) => enc.encode(`data: ${JSON.stringify(m)}\n\n`);
+  const frame = (m: StreamMsg) => enc.encode(`data: ${JSON.stringify(forViewers(m))}\n\n`);
   let cleanup = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
