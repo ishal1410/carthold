@@ -428,3 +428,50 @@ describe("false HELD/approval claims (live Northpine run 3)", () => {
     expect(text).toBe("I bought 1 x Basecamp Enamel Mug, 16 oz ($30) from Northpine Outfitters.");
   });
 });
+
+describe("A1: unknown / failed payment results reach the truthful summary", () => {
+  const mug = { merchant: "Northpine Outfitters", items: [{ name: "Basecamp Enamel Mug, 16 oz", quantity: 1, unitPriceUsd: 30 }], sourceSlug: "northpine" };
+  const cone = { merchant: "Brew & Bean", items: [{ name: "Ceramic Pour-Over Cone", quantity: 1, unitPriceUsd: 28 }], sourceSlug: "brew-and-bean" };
+  const run = async (results: string[], final: string, orders = [mug]) => {
+    const { llm } = scripted(...orders.map((o) => call("propose_order", o)), say(final));
+    return (await runAgent({ userRequest: "mug", onProposeOrder: async () => results.shift()!, llm })).text!;
+  };
+
+  it("unknown result + 'I ordered...': says status unknown / may be held, never 'Nothing was ordered'", async () => {
+    const text = await run(["Payment status unknown: PayPal error (status 503)"], "I ordered the mug but payment status is unknown.");
+    expect(text).not.toContain("Nothing was ordered");
+    expect(text).toMatch(/unknown/);
+    expect(text).toMatch(/may be held/);
+    expect(text).toContain("Basecamp Enamel Mug");
+  });
+
+  it("an onProposeOrder throw (guard crashed mid-payment) counts as unknown", async () => {
+    const { llm } = scripted(call("propose_order", mug), say("I bought the mug."));
+    const text = (await runAgent({ userRequest: "mug", onProposeOrder: async () => { throw new Error("boom"); }, llm })).text!;
+    expect(text).not.toContain("Nothing was ordered");
+    expect(text).toMatch(/may be held/);
+  });
+
+  it("failed result + 'I ordered...': says payment failed, nothing charged", async () => {
+    const text = await run(["Payment failed: PayPal error (status 422)"], "I ordered the mug.");
+    expect(text).toMatch(/payment failed/i);
+    expect(text).toMatch(/nothing was charged/);
+    expect(text).not.toContain("Nothing was ordered");
+  });
+
+  it("Paid cone + unknown mug: a buy claim about the unknown mug is rewritten, the cone claim stays", async () => {
+    const text = await run(
+      ["Paid: order O1, capture C1", "Payment status unknown: PayPal error (no response)"],
+      "I bought the Ceramic cone. I also bought the Basecamp mug.",
+      [cone, mug],
+    );
+    expect(text).toMatch(/^I bought the Ceramic cone\. /);
+    expect(text).not.toMatch(/also bought the Basecamp/);
+    expect(text).toMatch(/Basecamp Enamel Mug.*unknown.*may be held/);
+  });
+
+  it("a truthful unknown sentence without a buy claim is kept as written", async () => {
+    const text = await run(["Payment status unknown: x"], "Payment status for the mug is unknown; please check PayPal.");
+    expect(text).toBe("Payment status for the mug is unknown; please check PayPal.");
+  });
+});

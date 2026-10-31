@@ -12,7 +12,7 @@ export type CorpusEntry = {
 export function scoreCorpus(corpus: CorpusEntry[]) {
   const rows = corpus.map((e) => {
     const v = detectInjection(e.html, e.userRequest);
-    return { id: e.id, label: e.label, style: e.style, ...v, correct: v.flagged === (e.label === "attack") };
+    return { id: e.id, label: e.label, style: e.style, expectedTrigger: e.expectedTrigger, ...v, correct: v.flagged === (e.label === "attack") };
   });
   return {
     attacksBlocked: rows.filter((r) => r.label === "attack" && r.flagged).length,

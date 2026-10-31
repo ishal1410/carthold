@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { verdictLabel } from "../grid/format";
-import { actionError, runSettled, runStartError } from "./errors";
+import { actionError, heldKpi, runSettled, runStartError } from "./errors";
 import type { DecisionRow, GuardState } from "@/lib/guard/guard";
 import { fixtureState, settleFixtureHold } from "./fixtures";
 import { holdUpdates } from "./Trace";
@@ -115,5 +115,20 @@ describe("m5: client settled check mirrors the server", () => {
   });
   it("settled once only final rows and unresolvable unknown rows remain", () => {
     expect(runSettled(g([row("a", "captured"), row("b", "unknown")], { unresolvable: ["b"] }))).toBe(true);
+  });
+});
+
+describe("A5: Held for you KPI matches the hold bar", () => {
+  const row = (id: string, status: DecisionRow["status"], amountUsd: number) => ({ id, status, amountUsd }) as DecisionRow;
+  const state = (rows: DecisionRow[], amountAtRiskUsd: number) =>
+    ({ rows, pendingHolds: [], amountAtRiskUsd, committedUsd: 0, unknownRows: [] }) as GuardState;
+
+  it("a hold awaiting PayPal approval is shown as awaiting, not as $0 with nothing said", () => {
+    expect(heldKpi(state([row("d1", "awaiting_payer", 30)], 0))).toEqual({ heldUsd: 0, awaitingUsd: 30 });
+  });
+
+  it("held money and awaiting money are reported separately", () => {
+    const g = state([row("d1", "held", 12.5), row("d2", "awaiting_payer", 30), row("d3", "awaiting_payer", 4.25), row("d4", "captured", 9)], 12.5);
+    expect(heldKpi(g)).toEqual({ heldUsd: 12.5, awaitingUsd: 34.25 });
   });
 });

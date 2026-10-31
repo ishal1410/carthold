@@ -6,7 +6,7 @@ import { detectInjection, flaggedLines, sentencesOf, type FlaggedLine } from "..
 import { inspect, type Llm } from "../inspector/inspect";
 import { PayPalNotSentError } from "../paypal/client";
 import * as orders from "../paypal/orders";
-import { evaluate, type Mandate, type Verdict } from "../policy/policy";
+import { evaluate, kindQuantity, tokenize, traceable, type Mandate, type Verdict } from "../policy/policy";
 
 export type PayPalApi = Pick<
   typeof orders,
@@ -235,6 +235,18 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
         return { slug, insp, hidden, lines: flaggedLines(text, mandate.userRequest) };
       }),
     );
+    // A2: a visible quote that names only items the user asked for (by name words or catalog kind) is not followed
+    // injection. A quote naming nothing, or anything the request does not trace to, still blocks (fail closed).
+    // ponytail: names matched before the size suffix ("Morning Ritual Blend, 12 oz" -> "morning ritual blend") or by id.
+    const request = tokenize(mandate.userRequest);
+    const asked = (name: string) => traceable(request, name) || kindQuantity(request, name) !== null;
+    const onlyAsked = (quote: string) => {
+      const t = quote.toLowerCase();
+      const says = (term: string) => term.length >= 3 && t.includes(term);
+      const named = [...products.filter((p) => says(p.name.split(",")[0].trim().toLowerCase()) || says(p.id.toLowerCase())).map((p) => p.name),
+        ...items.map((i) => String(i.name)).filter((n) => says(n.split(",")[0].trim().toLowerCase()))];
+      return named.length > 0 && named.every(asked);
+    };
     const deviates = catalog.length > 0 || policy.reasons.some((r) => r.includes("not traceable"));
     const blocks: string[] = [];
     const warnings: string[] = [];
@@ -246,7 +258,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
       const q = insp.llm ? insp.quote : null;
       const injectedQuote = !!q && (lines.some((l) => l.line.includes(q)) || hidden.some((h) => h.includes(q)));
       const quoted = q && injectedQuote ? [{ line: q, sentence: q, reasons: [] }] : [];
-      const hit = (q && !injectedQuote ? q : null) || followedSentence(items, products, [...lines, ...quoted], merchantPage);
+      const hit = (q && !injectedQuote && !onlyAsked(q) ? q : null) || followedSentence(items, products, [...lines, ...quoted], merchantPage);
       // insp.flagged = regex backstop flagged the page or the LLM quote was verified; never an unchecked LLM opinion.
       if (hit) {
         blocks.push(`inspector: order follows injected text on page ${slug}: "${hit}"`);
@@ -510,13 +522,20 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
         ? Promise.resolve(copy())
         : Promise.reject(new Error(`no pending hold ${rowId}`));
     const p = (async () => {
-      const left = Math.max(1, Date.parse(row.expiresAt ?? "") - Date.now() || holdTimeoutMs);
+      // A fixed deadline, not a duration: the authorize call's latency must not extend the buyer's window (A3).
+      const deadline = Date.parse(row.expiresAt ?? "") || Date.now() + holdTimeoutMs;
       const url = row.payerActionUrl!;
       disarm(row);
       update(row, { status: "pending" });
       const notApproved = (why: string) => {
-        // PayPal refused (4xx, e.g. ORDER_NOT_APPROVED) or nothing was sent: nothing is held, keep waiting.
-        armPayer(row, url, left);
+        // PayPal refused (4xx, e.g. ORDER_NOT_APPROVED) or nothing was sent: nothing is held, keep waiting for
+        // whatever is left of the window; if it lapsed during the call, expire now (no PayPal call, nothing held).
+        const left = deadline - Date.now();
+        armPayer(row, url, Math.max(1, left));
+        if (left <= 0) {
+          void settle(row.id, "void", "", "expired").catch(() => {});
+          return new Error(`approval window expired (${why})`);
+        }
         return new Error(`not approved in PayPal yet (${why})`);
       };
       let o: orders.OrderResult;

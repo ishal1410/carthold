@@ -432,6 +432,36 @@ describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
     expect(payer.returnUrl.startsWith("http://x/demo/paypal-return?run=")).toBe(true);
   });
 
+  it("A4: production without PUBLIC_ORIGIN falls back to the card hold (req.url may be an internal origin) and warns once", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const runId = await startRun();
+      const msgs = await waitEnd(runId);
+      expect(lastState(msgs).rows[0].status).toBe("held");
+      expect((vi.mocked(pp.createAuthorizeOrder).mock.calls[0][2] as { payer?: unknown }).payer).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain("PUBLIC_ORIGIN");
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("A4: production requires an https PUBLIC_ORIGIN for PayPal approval, else card hold", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("PUBLIC_ORIGIN", "http://carthold.example");
+    try {
+      const runId = await startRun();
+      expect(lastState(await waitEnd(runId)).rows[0].status).toBe("held");
+      vi.stubEnv("PUBLIC_ORIGIN", "https://carthold.example");
+      const runId2 = await startRun();
+      expect(lastState(await waitEnd(runId2)).rows[0].status).toBe("awaiting_payer");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("PAYPAL_HOLD_PAYER=card: holds use the sandbox card (no payer urls)", async () => {
     process.env.PAYPAL_HOLD_PAYER = "card";
     const runId = await startRun();

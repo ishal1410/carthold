@@ -35,3 +35,12 @@ export function runSettled(g: GuardState): boolean {
   const dead = new Set(g.unresolvable ?? []);
   return g.pendingHolds.length === 0 && !g.rows.some((r) => r.status === "held" || r.status === "pending" || r.status === "awaiting_payer" || (r.status === "unknown" && !dead.has(r.id)));
 }
+
+/**
+ * A5: "Held for you" KPI. heldUsd is the guard's at-risk money (held + unknown); awaitingUsd is holds still waiting on
+ * PayPal approval, which the committed bar already draws as hold, so the KPI names it instead of showing "$0 held".
+ */
+export function heldKpi(g: GuardState): { heldUsd: number; awaitingUsd: number } {
+  const awaiting = g.rows.filter((r) => r.status === "awaiting_payer").reduce((s, r) => s + r.amountUsd, 0);
+  return { heldUsd: g.amountAtRiskUsd, awaitingUsd: Math.round(awaiting * 100) / 100 };
+}

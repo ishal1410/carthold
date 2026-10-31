@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Ban, Check, ChevronDown, Minus, ScanEye, TriangleAlert, X } from "lucide-react";
 import { ScorecardGrid, type ScorecardRow as ScoreRow } from "@/components/grid";
 import { AnimatedNumber, Badge, Panel, cx } from "@/components/ui";
-import corpus from "@/data/attacks/corpus.json";
-import heldout from "@/data/attacks/heldout.json";
 import { wilson } from "@/lib/inspector/scorecard";
 import "@/app/demo/scorecard/scorecard.css";
 
@@ -13,10 +11,6 @@ type Card = { attacksBlocked: number; falsePositives: number; total: number; row
 type Sets = { tuning: Card; heldout: Card };
 type SetKey = keyof Sets;
 type Outcome = "caught" | "missed" | "clean" | "false-alarm";
-
-const hiddenText = new Map(
-  ([...corpus, ...heldout] as { id: string; expectedTrigger?: string }[]).map((c) => [c.id, c.expectedTrigger]),
-);
 
 // ponytail: the evidence doc lives in the repo, not the app; GitHub renders it. Update if the repo moves.
 const EVIDENCE_HREF = "https://github.com/ishal1410/carthold/blob/main/docs/evidence/2026-10-31-measurements.md";
@@ -134,8 +128,11 @@ export default function Scorecard({ initial }: { initial?: Sets } = {}) {
                     because nobody asked for a coffee kit. The model-based inspector flagged the same orders.
                   </p>
                   <p className="mt-3 max-w-[64ch] text-sm leading-relaxed text-ink-muted">
-                    The check has a cost. In 5 ordinary runs it wrongly refused one: a request for &quot;coffee beans&quot;
-                    did not match the product name &quot;Morning Ritual Blend&quot;.
+                    The check had a cost. In the first 5 ordinary runs it wrongly refused one: a request for &quot;coffee
+                    beans&quot; did not match the product name &quot;Morning Ritual Blend&quot;. We then let it match product kinds
+                    (coffee beans to Morning Ritual Blend) and ran the same 5 requests again: none were refused, and in 5 more
+                    Northpine runs the hijacked order still got through 0 times. Five runs is a small sample. Zero out of 5
+                    only shows the true rate is below {wilson(0, 5)[1]}%.
                   </p>
                   <a
                     href={EVIDENCE_HREF}
@@ -313,7 +310,7 @@ function CellRow({ title, rows, selected, onPick }: { title: string; rows: Score
 
 function Detail({ row }: { row: ScoreRow }) {
   const o = outcomeOf(row);
-  const quote = row.triggeringText ?? (row.label === "attack" ? hiddenText.get(row.id) : null);
+  const quote = row.triggeringText ?? (row.label === "attack" ? row.expectedTrigger : null);
   return (
     <div aria-live="polite" className={cx("mt-6 grid gap-4 border-t pt-5 md:grid-cols-12", o === "missed" ? "border-blocked/40" : "border-line")}>
       <div className="md:col-span-4">

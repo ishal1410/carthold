@@ -2,6 +2,8 @@ import { CreateRunSchema, RunsFullError, createRun } from "../../../lib/run/sess
 import { fail, json, readJsonPost } from "../../../lib/run/http";
 import { clientIp, refundIpSlot, refundLiveSlot, refundSimulatedSlot, takeIpSlot, takeLiveSlot, takeSimulatedSlot } from "../../../lib/run/limits";
 
+let warnedNoOrigin = false;
+
 export async function POST(req: Request) {
   const read = await readJsonPost(req);
   if (read instanceof Response) return read;
@@ -20,7 +22,13 @@ export async function POST(req: Request) {
     return fail(429, "daily demo limit reached, try the recorded run at /demo?fixture=1 or come back tomorrow");
   try {
     // PayPal sends the buyer back here after approving a hold. PUBLIC_ORIGIN when set (behind Render / Cloudflare).
-    const origin = process.env.PUBLIC_ORIGIN?.trim().replace(/\/+$/, "") || new URL(req.url).origin;
+    // A4: in production req.url may be the proxy's internal origin, so no PUBLIC_ORIGIN -> no origin -> card hold.
+    let origin = process.env.PUBLIC_ORIGIN?.trim().replace(/\/+$/, "") || undefined;
+    if (!origin && process.env.NODE_ENV !== "production") origin = new URL(req.url).origin;
+    if (!origin && !warnedNoOrigin) {
+      warnedNoOrigin = true;
+      console.warn("[carthold] PUBLIC_ORIGIN unset in production: PayPal-approval holds disabled, using card holds");
+    }
     const { run, ownerToken } = createRun(parsed.data, { origin });
     return json({ runId: run.id, ownerToken }, 201);
   } catch (e) {

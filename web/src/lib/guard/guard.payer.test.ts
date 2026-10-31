@@ -165,6 +165,24 @@ describe("Approve with PayPal holds", () => {
     expect(g.getState().rows[0].status).toBe("expired");
   });
 
+  it("4xx on authorize that returns after the approval window: expired, not re-armed (A3)", async () => {
+    vi.useFakeTimers();
+    const pp = mockPayPal();
+    pp.authorizeOrder.mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 2000); // slow PayPal call: the 1s window lapses while it is in flight
+      throw Object.assign(new Error("422 ORDER_NOT_APPROVED"), { status: 422 });
+    });
+    const { g } = guard(pp, 1000);
+    await g.onProposeOrder(mugOrder);
+    await expect(g.payerApproved("d1", "O1")).rejects.toThrow();
+    const s = g.getState();
+    expect(s.rows[0]).toMatchObject({ status: "expired", decision: "expired" });
+    expect(s.pendingHolds).toEqual([]);
+    expect(s.committedUsd).toBe(0);
+    await expect(g.payerApproved("d1", "O1")).rejects.toThrow(/no pending hold/);
+    expect(pp.authorizeOrder).toHaveBeenCalledTimes(1);
+  });
+
   it("network error on authorize: unknown (money may be held), still counted", async () => {
     const pp = mockPayPal();
     pp.authorizeOrder.mockRejectedValueOnce(new TypeError("fetch failed"));

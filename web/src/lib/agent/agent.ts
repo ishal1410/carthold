@@ -136,23 +136,40 @@ const tokens = (n: string) => n.toLowerCase().match(/[a-z0-9]+/g) ?? [];
  * Final text must not claim an order state the guard didn't return (QA #9, B10, Northpine run 3).
  * Buy claim ("ordered/purchased/bought"): kept only when something was Paid and it names no held item.
  * HELD claim ("held", "waiting for approval"): kept only when it names a held item. A sentence must pass both.
- * A false claim becomes the truth, once (HELD template for every held order, else what was Paid, else nothing);
+ * A buy claim naming an unknown/failed item is false too (A1).
+ * A false claim becomes the truth, once (HELD template for every held order, else what was Paid, plus any unknown
+ * and failed payments; "Nothing was ordered or held" only when there were none of these);
  * later false claims are dropped. A held item is "named" by any whole word (3+ letters) of its name that no Paid
  * item shares; merchant names never count, since a Paid order from the same merchant is a true claim (m1).
  * ponytail: word match only; a fully paraphrased held item next to a Paid order slips through.
  */
-export function fixHeldClaim(text: string, held: AgentOrder[], paid: AgentOrder[] = []): string {
-  const truth = held.length
-    ? `I proposed ${held.map(describe).join(" and ")}; ${held.length > 1 ? "they are" : "it is"} HELD waiting for your approval — nothing has been bought yet.`
-    : paid.length ? `I bought ${paid.map(describe).join(" and ")}.` : "Nothing was ordered or held.";
+export function fixHeldClaim(
+  text: string,
+  held: AgentOrder[],
+  paid: AgentOrder[] = [],
+  unknown: AgentOrder[] = [],
+  failed: AgentOrder[] = [],
+): string {
+  const list = (os: AgentOrder[]) => os.map(describe).join(" and ");
+  const truth = [
+    held.length
+      ? `I proposed ${list(held)}; ${held.length > 1 ? "they are" : "it is"} HELD waiting for your approval — nothing has been bought yet.`
+      : paid.length ? `I bought ${list(paid)}.` : unknown.length || failed.length ? "" : "Nothing was ordered or held.",
+    // A1: money may be held on an unknown result, so it is never summarised as "nothing was ordered".
+    unknown.length ? `Payment status for ${list(unknown)} is unknown; money may be held, so check PayPal before retrying.` : "",
+    failed.length ? `Payment failed for ${list(failed)}; nothing was charged.` : "",
+  ].filter(Boolean).join(" ");
   const paidWords = new Set(paid.flatMap((o) => o.items.flatMap((i) => tokens(i.name))));
-  const words = new Set(held.flatMap((o) => o.items.flatMap((i) => tokens(i.name))).filter((w) => w.length >= 3 && !paidWords.has(w)));
+  const wordsOf = (os: AgentOrder[]) =>
+    new Set(os.flatMap((o) => o.items.flatMap((i) => tokens(i.name))).filter((w) => w.length >= 3 && !paidWords.has(w)));
+  const words = wordsOf(held), unpaidWords = wordsOf([...held, ...unknown, ...failed]);
   let done = false;
   return text
     .split(/(?<=[.!?])\s+/)
     .flatMap((s) => {
       const namesHeld = tokens(s).some((w) => words.has(w));
-      const buyOk = !/\b(ordered|purchased|bought)\b/i.test(s) || (paid.length > 0 && !namesHeld);
+      const namesUnpaid = tokens(s).some((w) => unpaidWords.has(w));
+      const buyOk = !/\b(ordered|purchased|bought)\b/i.test(s) || (paid.length > 0 && !namesUnpaid);
       const heldOk = !/\bheld\b|waiting for (your )?approval/i.test(s) || namesHeld;
       if (buyOk && heldOk) return [s];
       return done ? [] : ((done = true), [truth]);
@@ -206,10 +223,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<{ text?: string; 
   const refused = new Map<string, { order: AgentOrder; result: string }>();
   const held = new Map<string, AgentOrder>(); // every order whose propose_order result was HELD (B10)
   const paid: AgentOrder[] = [];
+  const unknown: AgentOrder[] = []; // "Payment status unknown" or a guard crash: money may be held (A1)
+  const failed: AgentOrder[] = [];
   const close = (text: string) => {
     // The guard-derived line replaces any "Blocked:" (or older "Refused:") line the model wrote itself (it can mislabel a held item).
     if (refused.size) text = text.split("\n").filter((l) => !/^\s*(Refused|Blocked):/i.test(l)).join("\n").trim();
-    text = fixHeldClaim(text, [...held.values()], paid);
+    text = fixHeldClaim(text, [...held.values()], paid, unknown, failed);
     if (!refused.size) return text;
     return text ? `${text}\n${refusedLine(refused)}` : refusedLine(refused);
   };
@@ -260,11 +279,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<{ text?: string; 
           const k = orderKey(order);
           if (result.startsWith("Paid")) paid.push(order);
           if (result.startsWith("HELD")) held.set(k, order);
+          // A parsed order whose guard call threw ("ERROR: ...") may have reached PayPal: treat it as unknown.
+          if (result.startsWith("Payment status unknown") || result.startsWith("ERROR")) unknown.push(order);
+          if (result.startsWith("Payment failed")) failed.push(order);
           if (result.startsWith("BLOCKED")) {
             held.delete(k); // m2: its later result wins, so it is reported as Blocked only
             if (!refused.has(k)) refused.set(k, { order, result });
           }
-          else if (result.startsWith("HELD") || result.startsWith("Paid")) refused.delete(k); // went through after all
+          else refused.delete(k); // passed the guard after all (Paid / HELD / unknown / failed)
         }
       }
       onEvent({ type: "tool_result", step, name, result });

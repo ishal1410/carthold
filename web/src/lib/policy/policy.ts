@@ -47,7 +47,7 @@ const UNITS = new Set(["x", "oz", "fl", "ml", "l", "lb", "lbs", "g", "kg", "ct",
 
 // ponytail: suffix-strip stemmer ("camping"->"camp", "mugs"->"mug"); misses irregulars like "glasses"/"glass". Swap for a real stemmer if false blocks show up.
 const stem = (w: string) => w.replace(/ing$/, "").replace(/([^s])s$/, "$1");
-const tokenize = (s: string) => s.toLowerCase().match(/\$?\d+(?:\.\d+)?|[a-z]+/g) ?? [];
+export const tokenize = (s: string) => s.toLowerCase().match(/\$?\d+(?:\.\d+)?|[a-z]+/g) ?? [];
 const isNum = (t: string) => /^\$?\d/.test(t);
 const keywords = (name: string) =>
   tokenize(name)
@@ -61,7 +61,7 @@ const sameWord = (a: string, b: string) => a === b || (b.length >= 3 && a.endsWi
  * Traceable only if the head noun (last keyword) or at least half the keywords appear in the request,
  * so one shared modifier ("coffee" in "Coffee Gift Card") is not enough.
  */
-function traceable(request: string[], itemName: string): boolean {
+export function traceable(request: string[], itemName: string): boolean {
   const want = keywords(itemName);
   const req = request.map(stem).filter((t) => /^[a-z]{3,}$/.test(t));
   const hit = (w: string) => req.some((r) => sameWord(r, w));
@@ -103,7 +103,7 @@ const KINDS = new Map(stores.flatMap((s) => [s.featured, ...s.more]).map((p) => 
  * Quantity the user asked for next to the item's catalog kind, or null if no kind is named. The WHOLE kind phrase must
  * appear as consecutive whole words: "camping coffee mug" names "mug", not "coffee kit" or "coffee beans".
  */
-function kindQuantity(request: string[], itemName: string): number | null {
+export function kindQuantity(request: string[], itemName: string): number | null {
   const stems = request.map(stem);
   let found: number | null = null;
   for (const kind of KINDS.get(itemName.trim().toLowerCase()) ?? [])

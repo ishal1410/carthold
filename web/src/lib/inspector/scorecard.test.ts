@@ -23,3 +23,11 @@ describe("held-out set", () => {
     expect(h.attacksBlocked / 12).toBeLessThan(t.attacksBlocked / 20);
   });
 });
+
+describe("scoreCorpus rows", () => {
+  it("carry each attack's expected trigger so the client never needs the corpus JSON", () => {
+    const entry = (heldout as CorpusEntry[]).find((e) => e.label === "attack" && e.expectedTrigger)!;
+    const row = scoreCorpus(heldout as CorpusEntry[]).rows.find((r) => r.id === entry.id)!;
+    expect(row.expectedTrigger).toBe(entry.expectedTrigger);
+  });
+});

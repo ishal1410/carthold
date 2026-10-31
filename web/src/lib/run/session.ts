@@ -193,6 +193,8 @@ export function isOwner(run: Run, token: string | null | undefined): boolean {
  */
 export function payerUrlsFor(runId: string, origin: string | undefined) {
   if ((process.env.PAYPAL_HOLD_PAYER ?? "paypal").trim().toLowerCase() === "card" || !origin) return undefined;
+  // A4: a buyer sent back to a plain-http origin in production lands on a dead link and the hold expires.
+  if (process.env.NODE_ENV === "production" && !origin.startsWith("https://")) return undefined;
   return (rowId: string) => {
     const back = `${origin}/demo/paypal-return?${new URLSearchParams({ run: runId, row: rowId })}`;
     return { returnUrl: back, cancelUrl: `${back}&cancelled=1` };

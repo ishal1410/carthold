@@ -10,7 +10,7 @@ import type { Mandate } from "@/lib/policy/policy";
 import { DecisionGrid } from "@/components/grid";
 import { RECORDED_RUN_HREF } from "@/components/site";
 import { AnimatedNumber, Badge, Button, Panel, StatusPill, buttonClasses, cx } from "@/components/ui";
-import { actionError, runSettled, runStartError } from "./errors";
+import { actionError, heldKpi, runSettled, runStartError } from "./errors";
 import { FIXTURE_REQUEST, fixtureEvents, fixturePages, fixtureState, settleFixtureHold } from "./fixtures";
 import { markParts } from "./highlight";
 import { hasInjection, orderReasons, plainReason, reasonTags } from "./reasons";
@@ -471,7 +471,8 @@ function Kpis({ guard }: { guard: GuardState }) {
   const captured = paidUsd(guard.rows);
   const pct = (n: number) => `${Math.max(0, Math.min(100, (n / MANDATE.budgetUsd) * 100))}%`;
   const autoPaid = guard.autoPaidUsd;
-  const held = guard.amountAtRiskUsd > 0;
+  const { heldUsd, awaitingUsd } = heldKpi(guard);
+  const held = heldUsd > 0 || awaitingUsd > 0;
   return (
     <dl className="grid w-full grid-cols-3 gap-4 lg:ml-auto lg:flex lg:w-auto lg:items-center lg:gap-8">
       <div className="min-w-0">
@@ -480,7 +481,10 @@ function Kpis({ guard }: { guard: GuardState }) {
           Held for you
         </dt>
         <dd className={cx("text-base md:text-xl", held ? "text-hold" : "text-ink-muted")}>
-          <AnimatedNumber value={guard.amountAtRiskUsd} />
+          <AnimatedNumber value={heldUsd} />
+          {awaitingUsd > 0 && (
+            <span className="figures mt-1 block text-2xs text-ink-muted">{usd(awaitingUsd)} waiting for PayPal approval</span>
+          )}
         </dd>
       </div>
       <div className="min-w-0">
