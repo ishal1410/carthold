@@ -5,6 +5,7 @@ import BrewAndBean from "../_ui/brew-and-bean";
 import GiftHub from "../_ui/gifthub";
 import QuickTech from "../_ui/quicktech";
 import Trailhead from "../_ui/trailhead";
+import { RevealControl } from "../_ui/reveal";
 
 const views = { trailhead: Trailhead, "brew-and-bean": BrewAndBean, gifthub: GiftHub, quicktech: QuickTech };
 
@@ -22,5 +23,13 @@ export default async function StorePage(props: PageProps<"/stores/[slug]">) {
   const store = getStore(slug);
   const View = views[slug as keyof typeof views];
   if (!store || !View) notFound();
-  return <View store={store} />;
+  return (
+    <>
+      {/* Room so the floating control never covers the store footer, padded inside the store's own background. */}
+      <div className="*:pb-20">
+        <View store={store} />
+      </div>
+      <RevealControl hiddenCount={store.hidden.length} />
+    </>
+  );
 }

@@ -29,3 +29,41 @@ export function refusedText(result: string, rows: { reasons: string[] }[]): stri
   const row = rows.find((r) => REFUSED + r.reasons.join("; ") === result);
   return row ? REFUSED + orderReasons(row.reasons).join("; ") : result;
 }
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** One reason as a sentence a shopper reads. Injection-follow names the page instead of quoting it. */
+export function plainReason(r: string): string {
+  const follow = /^inspector: order follows injected text on page ([\w-]+)/i.exec(r);
+  if (follow) return `Followed text hidden on the ${follow[1]} page`;
+  return cap(stripWarning(r).replace(/^inspector:?\s*/i, "").replace(/^policy:?\s*/i, ""));
+}
+
+// Short "what broke" tags: [pattern, tag]. Unmatched reasons stay in the full list only.
+const TAGS: [RegExp, (m: RegExpExecArray) => string][] = [
+  [/^inspector: order follows injected text/i, () => "followed hidden text"],
+  [/^inspector: merchant page .* deviates/i, () => "page steered the order"],
+  [/quantity (\d+) exceeds max quantity (\d+)/i, (m) => `qty ${m[1]} > ${m[2]}`],
+  [/\$([\d.,]+) exceeds per-item cap \$([\d.,]+)/i, (m) => `$${m[1]} > $${m[2]} cap`],
+  [/total \$([\d.,]+) exceeds remaining budget \$([\d.,]+)/i, (m) => `$${m[1]} > $${m[2]} left`],
+  [/total (\$[\d.,]+) is over the (\$[\d.,]+) ask-me limit/i, (m) => `${m[1]} > ${m[2]} ask-me limit`],
+  [/not in merchant catalog/i, () => "not in catalog"],
+  [/^merchant .* not on allowlist/i, () => "store not allowed"],
+  [/not traceable to user request/i, () => "not what you asked for"],
+];
+
+/** Deduped short tags for a row's blocking reasons, in orderReasons order. Warnings never tag. */
+export function reasonTags(rs: string[]): string[] {
+  const out = new Set<string>();
+  for (const r of orderReasons(rs)) {
+    if (isWarning(r)) continue;
+    for (const [re, tag] of TAGS) {
+      const m = re.exec(r);
+      if (m) {
+        out.add(tag(m));
+        break;
+      }
+    }
+  }
+  return [...out];
+}

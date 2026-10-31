@@ -1,19 +1,20 @@
-/* New row DOM fades in (rows are recycled, so this fires on insert, not on every update). */
+/* New row DOM fades in (rows are recycled, so this fires on insert, not on every update).
+   Opacity only: AG Grid positions rows with transform, so animating it stacks rows at the top. */
 @keyframes ag-row-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.ag-row { animation: ag-row-in 280ms ease-out; }
+.ag-row { animation: ag-row-in 320ms cubic-bezier(0.16, 1, 0.3, 1); }
 @media (prefers-reduced-motion: reduce) {
   .ag-row { animation: none; }
 }
 
-/* Status accent on the row's leading edge (color is backed by the Status text column). */
-.ag-st-pending { box-shadow: inset 3px 0 0 #a1a1aa; }
-.ag-st-blocked { box-shadow: inset 3px 0 0 #f43f5e; }
-.ag-st-held { box-shadow: inset 3px 0 0 #fbbf24; background-color: rgb(251 191 36 / 0.06); }
-.ag-st-captured { box-shadow: inset 3px 0 0 #34d399; }
-.ag-st-error { box-shadow: inset 3px 0 0 #fb923c; }
+/* Status accent on the row's leading edge (color is backed by the Status pill and text). */
+.ag-st-pending { box-shadow: inset 2px 0 0 var(--neutral); }
+.ag-st-blocked { box-shadow: inset 2px 0 0 var(--blocked); }
+.ag-st-held { box-shadow: inset 2px 0 0 var(--hold); background-color: var(--color-hold-soft); }
+.ag-st-captured { box-shadow: inset 2px 0 0 var(--paid); }
+.ag-st-error { box-shadow: inset 2px 0 0 var(--warning); }
 
 /* Overlay (invisible) scrollbars sit on top of the last row; the theme paints their track opaque and clips it. */
 .ag-scrollbar-invisible .ag-body-horizontal-scroll-viewport { background: transparent; }

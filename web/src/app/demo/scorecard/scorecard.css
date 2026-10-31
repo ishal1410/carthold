@@ -1,0 +1,68 @@
+/* Scorecard page only. Re-skins the shared AG Grid to Night Escrow tokens without touching components/grid. */
+.sc-grid .ag-root-wrapper {
+  --ag-background-color: var(--surface-1) !important;
+  --ag-chrome-background-color: var(--surface-2) !important;
+  --ag-odd-row-background-color: var(--surface-1) !important;
+  --ag-header-background-color: var(--surface-2) !important;
+  --ag-foreground-color: var(--ink) !important;
+  --ag-text-color: var(--ink) !important;
+  --ag-header-text-color: var(--ink-muted) !important;
+  --ag-border-color: var(--line) !important;
+  --ag-row-border: 1px solid var(--line) !important;
+  --ag-accent-color: var(--hold) !important;
+  --ag-row-hover-color: var(--surface-3) !important;
+  --ag-wrapper-border-radius: var(--radius-md) !important;
+}
+
+/* Line-height bug: Quartz sets cell line-height to the row height, so wrapped text got 40px leading. */
+.sc-grid .ag-cell-wrap-text,
+.sc-grid .ag-cell-auto-height {
+  line-height: 1.45 !important;
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+.sc-grid .ag-cell { display: flex; align-items: center; }
+.sc-grid .ag-cell-wrap-text { display: block; }
+
+/* Grid's own filter chips and search box, in tokens. */
+.sc-grid [role="group"] { border-color: var(--line-strong); border-radius: var(--radius-pill); }
+.sc-grid [role="group"] button { border-radius: var(--radius-pill); color: var(--ink-muted); }
+.sc-grid [role="group"] button[aria-pressed="true"] { background: var(--color-hold-soft); color: var(--hold); }
+.sc-grid input[type="search"] {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--ink);
+  padding-inline: 14px;
+}
+.sc-grid input[type="search"]:focus { border-color: color-mix(in oklab, var(--hold) 60%, transparent); }
+.sc-grid .text-red-300, .sc-grid .text-red-400 { color: var(--blocked); }
+.sc-grid .text-emerald-400 { color: var(--paid); }
+.sc-grid .text-amber-300 { color: var(--hold); }
+.sc-grid .text-zinc-300, .sc-grid .text-zinc-400 { color: var(--ink-muted); }
+
+/* The one orchestrated moment: the missed cell rings once after the map lands. */
+@media (prefers-reduced-motion: no-preference) {
+  .sc-miss::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 8px;
+    border: 2px solid var(--blocked);
+    opacity: 0;
+    animation: sc-ring 1.4s var(--ease-out) 0.6s 2;
+    pointer-events: none;
+  }
+  .sc-skeleton { animation: sc-shimmer 1.6s ease-in-out infinite; }
+}
+@keyframes sc-ring {
+  0% { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+@keyframes sc-shimmer {
+  50% { opacity: 0.5; }
+}
+
+/* grid.css's ag-row-in keyframes animate transform, which overrides AG Grid's translateY row
+   positioning and stacks every row at the top while it runs. Off here; static data needs no entrance. */
+.sc-grid .ag-row { animation: none !important; }

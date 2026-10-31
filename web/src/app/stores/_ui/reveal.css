@@ -1,0 +1,82 @@
+/* "Reveal what the agent sees": paints hidden segments in place. Fixed colours, because each store
+   has its own light palette and the reveal has to read as CartHold's verdict red on all of them. */
+.rv-thumb { transition: left var(--duration-base) var(--ease-snap); }
+.rv-track { transition: background-color var(--duration-base), border-color var(--duration-base); }
+
+body[data-agent-view] [data-hidden-style="white-on-white"],
+body[data-agent-view] [data-hidden-style="visually-hidden"] {
+  position: relative !important;
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 16px 0 !important;
+  padding: 30px 14px 12px !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  white-space: normal !important;
+  font-size: 14px !important;
+  line-height: 1.55 !important;
+  color: #7A140B !important;
+  background: #FFEDEA !important;
+  border: 1.5px dashed #C2281B !important;
+  border-radius: 10px;
+  text-align: left;
+  font-family: var(--font-sans);
+}
+
+body[data-agent-view] [data-hidden-style="white-on-white"]::before,
+body[data-agent-view] [data-hidden-style="visually-hidden"]::before,
+body[data-agent-view] [data-hidden-style="aria-label"]::before {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  font: 600 11px/1 var(--font-mono);
+  color: #C2281B;
+  letter-spacing: 0;
+}
+body[data-agent-view] [data-hidden-style="white-on-white"]::before { content: "Hidden: white text on a white background"; }
+body[data-agent-view] [data-hidden-style="visually-hidden"]::before { content: "Hidden: text only screen readers and agents get"; }
+
+/* aria-label payload lives on the product art: print the label over the image. */
+body[data-agent-view] [data-hidden-style="aria-label"] {
+  position: relative;
+  outline: 2px dashed #C2281B;
+  outline-offset: 3px;
+}
+body[data-agent-view] [data-hidden-style="aria-label"]::before {
+  content: "Hidden: image label";
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  left: auto;
+  background: #FFEDEA;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+body[data-agent-view] [data-hidden-style="aria-label"]::after {
+  content: attr(aria-label);
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #FFEDEA;
+  border: 1.5px dashed #C2281B;
+  color: #7A140B;
+  font: 400 14px/1.5 var(--font-sans);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body[data-agent-view] [data-hidden-style]::after,
+  body[data-agent-view] [data-hidden-style="white-on-white"],
+  body[data-agent-view] [data-hidden-style="visually-hidden"] {
+    animation: rv-in 320ms var(--ease-out);
+  }
+}
+@keyframes rv-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}

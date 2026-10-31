@@ -1,26 +1,272 @@
 @import "tailwindcss";
 
+/* Night Escrow tokens. See web/DESIGN.md. Dark is the default scene;
+   set data-theme="light" on <html> for the light theme. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+  --canvas: #0b0d0c;
+  --surface-1: #111412;
+  --surface-2: #171b19;
+  --surface-3: #1f2421;
+  --line: rgb(232 236 226 / 0.08);
+  --line-strong: rgb(232 236 226 / 0.16);
+  --ink: #eceee6;
+  --ink-muted: #a3a99e;
+  --ink-faint: #7e857a;
+
+  --hold: #f2b33d;
+  --hold-ink: #1a1203;
+  --paid: #5bd69a;
+  --paid-ink: #04170d;
+  --blocked: #ff6b5e;
+  --blocked-ink: #1f0503;
+  --warning: #e3cf6a;
+  --info: #7cc4e6;
+  --neutral: #8c948a;
+
+  --soft-alpha: 12%;
+  --highlight: rgb(255 255 255 / 0.05);
+  --shade: rgb(0 0 0 / 0.6);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #f4f3ee;
+  --surface-1: #ffffff;
+  --surface-2: #f8f7f3;
+  --surface-3: #eeede6;
+  --line: rgb(20 23 19 / 0.1);
+  --line-strong: rgb(20 23 19 / 0.18);
+  --ink: #141713;
+  --ink-muted: #4e554c;
+  --ink-faint: #6c7369;
+
+  --hold: #9a5f00;
+  --hold-ink: #ffffff;
+  --paid: #13774a;
+  --paid-ink: #ffffff;
+  --blocked: #c2281b;
+  --blocked-ink: #ffffff;
+  --warning: #7a6400;
+  --info: #1f6a8f;
+  --neutral: #5f665d;
+
+  --soft-alpha: 10%;
+  --highlight: rgb(255 255 255 / 0.9);
+  --shade: rgb(20 23 19 / 0.18);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-canvas: var(--canvas);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-hold: var(--hold);
+  --color-hold-ink: var(--hold-ink);
+  --color-hold-soft: color-mix(in oklab, var(--hold) var(--soft-alpha), transparent);
+  --color-paid: var(--paid);
+  --color-paid-ink: var(--paid-ink);
+  --color-paid-soft: color-mix(in oklab, var(--paid) var(--soft-alpha), transparent);
+  --color-blocked: var(--blocked);
+  --color-blocked-ink: var(--blocked-ink);
+  --color-blocked-soft: color-mix(in oklab, var(--blocked) var(--soft-alpha), transparent);
+  --color-warning: var(--warning);
+  --color-warning-soft: color-mix(in oklab, var(--warning) var(--soft-alpha), transparent);
+  --color-info: var(--info);
+  --color-info-soft: color-mix(in oklab, var(--info) var(--soft-alpha), transparent);
+  --color-neutral: var(--neutral);
+  --color-neutral-soft: color-mix(in oklab, var(--neutral) var(--soft-alpha), transparent);
+
+  /* Legacy aliases kept for pages not yet rebuilt. */
+  --color-background: var(--canvas);
+  --color-foreground: var(--ink);
+
+  --font-display: var(--font-bricolage), ui-sans-serif, sans-serif;
+  --font-sans: var(--font-instrument), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2.5rem;
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 3.5rem;
+  --text-4xl--line-height: 1.02;
+  --text-money: 3rem;
+  --text-money--line-height: 1;
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --shadow-raise: inset 0 1px 0 0 var(--highlight), 0 12px 32px -16px var(--shade);
+  --shadow-float: 0 24px 60px -24px var(--shade);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+
+  --animate-hold-ring: hold-ring 2.4s var(--ease-out) infinite;
+  --animate-shimmer: shimmer 1.8s var(--ease-snap) infinite;
+
+  @keyframes hold-ring {
+    0% {
+      transform: scale(1);
+      opacity: 0.55;
+    }
+    80%,
+    100% {
+      transform: scale(1.9);
+      opacity: 0;
+    }
+  }
+  @keyframes shimmer {
+    50% {
+      opacity: 0.45;
+    }
   }
 }
 
+/* Motion durations as plain vars (Tailwind has no duration namespace). */
+:root {
+  --duration-fast: 140ms;
+  --duration-base: 240ms;
+  --duration-slow: 480ms;
+  --duration-slower: 900ms;
+}
+
+html {
+  background: var(--canvas);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--hold) 35%, transparent);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--hold);
+  outline-offset: 2px;
+}
+
+/* ---------- Utilities ---------- */
+
+/* Translucent layer for sticky/fixed elements only (nav, dialogs). */
+@utility glass {
+  background: color-mix(in oklab, var(--canvas) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--line);
+}
+
+/* Double-bezel outer shell. Pair with an inner .bezel-core. */
+@utility bezel {
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--ink) 3%, transparent);
+  border: 1px solid var(--line);
+}
+
+@utility bezel-core {
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-raise);
+}
+
+/* 1px amber-to-transparent edge for the single most important panel. */
+@utility edge-hold {
+  position: relative;
+  border-color: transparent;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--hold) 80%, transparent),
+      color-mix(in oklab, var(--hold) 10%, transparent) 45%,
+      transparent 70%
+    );
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+/* State glows: offset downward, wide and soft. Describe state, never decorate. */
+@utility glow-hold {
+  box-shadow:
+    var(--shadow-raise),
+    0 18px 48px -18px color-mix(in oklab, var(--hold) 45%, transparent);
+}
+@utility glow-paid {
+  box-shadow:
+    var(--shadow-raise),
+    0 18px 48px -18px color-mix(in oklab, var(--paid) 40%, transparent);
+}
+@utility glow-blocked {
+  box-shadow:
+    var(--shadow-raise),
+    0 18px 48px -18px color-mix(in oklab, var(--blocked) 40%, transparent);
+}
+
+/* Ledger grid field for the hero and flow diagram. */
+@utility bg-grid {
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 40%, transparent 100%);
+}
+
+/* Film grain. Use once per page on a fixed, pointer-events-none element. */
+@utility noise {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Money and ids. */
+@utility figures {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }

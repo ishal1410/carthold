@@ -1,38 +1,24 @@
-/* Motion for /demo. Everything is gated behind prefers-reduced-motion. */
+/* Motion for the reveal dialog. Everything is gated behind prefers-reduced-motion. */
 @media (prefers-reduced-motion: no-preference) {
-  .ag-enter {
-    animation: ag-enter 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
-  .ag-slam {
-    animation: ag-slam 520ms cubic-bezier(0.2, 0.9, 0.25, 1.2) both;
-  }
-  .ag-pulse {
-    animation: ag-pulse 1.6s ease-in-out infinite;
-  }
   .ag-reveal {
-    animation: ag-reveal 900ms 250ms ease-out both;
+    animation: ag-reveal 900ms 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  dialog.ag-dialog[open] {
+    animation: ag-dialog-in 480ms cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 }
 
-@keyframes ag-enter {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes ag-slam {
-  0% { opacity: 0; transform: scale(1.04); box-shadow: 0 0 0 0 rgb(244 63 94 / 0.6); }
-  60% { opacity: 1; transform: scale(0.995); box-shadow: 0 0 0 10px rgb(244 63 94 / 0); }
-  100% { transform: none; }
-}
-@keyframes ag-pulse {
-  50% { opacity: 0.35; }
-}
 @keyframes ag-reveal {
   from { background-size: 0% 100%; }
   to { background-size: 100% 100%; }
 }
+@keyframes ag-dialog-in {
+  from { opacity: 0; transform: scale(1.03); }
+  to { opacity: 1; transform: none; }
+}
 
 .ag-redline {
-  background-image: linear-gradient(rgb(244 63 94 / 0.28), rgb(244 63 94 / 0.28));
+  background-image: linear-gradient(var(--color-blocked-soft), var(--color-blocked-soft));
   background-repeat: no-repeat;
   background-size: 100% 100%;
   box-decoration-break: clone;
@@ -40,6 +26,6 @@
 }
 
 dialog.ag-dialog::backdrop {
-  background: rgb(9 9 11 / 0.75);
-  backdrop-filter: blur(4px);
+  background: color-mix(in oklab, var(--canvas) 78%, transparent);
+  backdrop-filter: blur(6px);
 }

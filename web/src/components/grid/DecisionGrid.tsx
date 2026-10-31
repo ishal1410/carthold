@@ -4,9 +4,11 @@ import { AllCommunityModule, ModuleRegistry, type ColDef, type ICellRendererPara
 import { AgGridReact } from "ag-grid-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DecisionRow } from "../../lib/guard/guard";
-import { filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, statusLabel, VERDICT_CLASS } from "./format";
-import { headline } from "../demo/reasons";
+import { filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, statusLabel } from "./format";
+import { headline, plainReason } from "../demo/reasons";
 import { gridTheme } from "./theme";
+import { ReceiptInline } from "../demo/Receipt";
+import { Badge, StatusPill, buttonClasses, cx } from "../ui";
 import "./grid.css";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -22,52 +24,16 @@ export type DecisionGridProps = {
 // Renderers only read `data`, so the phone card list can reuse them with a bare row.
 type Cell = Pick<ICellRendererParams<DecisionRow>, "data">;
 
+const PILL = { allow: "allow", hold: "hold", block: "block" } as const;
+const VERDICT_WORD = { allow: "Allow", hold: "Hold", block: "Block" } as const;
+
 function VerdictPill({ data }: Cell) {
   if (!data) return null;
-  return (
-    <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium uppercase tracking-wide ring-1 ring-inset ${VERDICT_CLASS[data.verdict]}`}>
-      {data.verdict}
-    </span>
-  );
-}
-
-function CopyId({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () =>
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    });
-  return (
-    <button
-      type="button"
-      data-copy
-      title={`Copy ${label} id ${value}`}
-      onClick={copy}
-      className="block max-w-full truncate text-left font-mono text-xs text-zinc-400 hover:text-emerald-300 focus-visible:text-emerald-300 focus-visible:outline-none"
-    >
-      <span className="text-zinc-600">{label} </span>
-      {copied ? "copied" : value}
-    </button>
-  );
+  return <StatusPill status={PILL[data.verdict]} label={VERDICT_WORD[data.verdict]} size="sm" />;
 }
 
 function PayPalIds({ data }: Cell) {
-  if (!data) return null;
-  const ids: [string, string | undefined][] = [
-    ["order", data.paypalOrderId],
-    ["auth", data.authorizationId],
-    ["capture", data.captureId],
-  ];
-  const present = ids.filter((e): e is [string, string] => !!e[1]);
-  if (!present.length) return <span className="text-zinc-600">—</span>;
-  return (
-    <div className="flex flex-col gap-0.5 py-1 leading-tight">
-      {present.map(([l, v]) => (
-        <CopyId key={l} label={l} value={v} />
-      ))}
-    </div>
-  );
+  return data ? <ReceiptInline row={data} /> : null;
 }
 
 function Countdown({ data }: Cell) {
@@ -78,25 +44,25 @@ function Countdown({ data }: Cell) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [expiresAt]);
-  if (!expiresAt) return <span className="text-zinc-600">—</span>;
+  if (!expiresAt) return <span className="text-ink-faint">-</span>;
   const left = Date.parse(expiresAt) - now;
   return (
-    <span className={`font-mono tabular-nums ${left < 30_000 ? "text-red-300" : "text-amber-300"}`}>{formatCountdown(left)}</span>
+    <span className={`figures ${left < 30_000 ? "text-blocked" : "text-hold"}`}>{formatCountdown(left)}</span>
   );
 }
 
 const columnDefs: ColDef<DecisionRow>[] = [
-  { field: "time", headerName: "Time", width: 96, valueFormatter: (p) => (p.value ? formatTime(p.value) : ""), cellClass: "font-mono tabular-nums" },
-  { field: "merchant", headerName: "Merchant", width: 170, filter: "agTextColumnFilter" },
+  { field: "time", headerName: "Time", width: 92, valueFormatter: (p) => (p.value ? formatTime(p.value) : ""), cellClass: "figures text-ink-faint" },
+  { field: "merchant", headerName: "Merchant", width: 160, filter: "agTextColumnFilter" },
   { field: "items", headerName: "Items", flex: 1, minWidth: 180, tooltipField: "items" },
   {
     field: "amountUsd", headerName: "Amount", width: 108, type: "rightAligned",
-    valueFormatter: (p) => (p.value == null ? "" : formatUsd(p.value)), cellClass: "font-mono tabular-nums",
+    valueFormatter: (p) => (p.value == null ? "" : formatUsd(p.value)), cellClass: "figures",
     filter: "agNumberColumnFilter",
   },
-  { field: "verdict", headerName: "Verdict", width: 100, cellRenderer: VerdictPill },
+  { field: "verdict", headerName: "Verdict", width: 96, cellRenderer: VerdictPill },
   {
-    field: "status", headerName: "Status", width: 120, filter: "agTextColumnFilter", enableCellChangeFlash: true,
+    field: "status", headerName: "Status", width: 104, filter: "agTextColumnFilter", enableCellChangeFlash: true,
     valueFormatter: (p) => (p.value ? statusLabel(p.value) : ""),
     // Filter on the label the user sees ("Paid"), not the raw enum ("captured").
     filterValueGetter: (p) => (p.data ? statusLabel(p.data.status) : ""),
@@ -107,13 +73,13 @@ const columnDefs: ColDef<DecisionRow>[] = [
     valueFormatter: (p) => {
       const r: string[] = p.value ?? [];
       // Lead with the reason that decided it, never a non-blocking "warning:".
-      return r.length > 1 ? `${headline(r)} (+${r.length - 1} more)` : (r[0] ?? "");
+      return r.length > 1 ? `${plainReason(headline(r))} (+${r.length - 1} more)` : r[0] ? plainReason(r[0]) : "";
     },
     tooltipValueGetter: (p) => (p.data?.reasons ?? []).join("\n"),
-    cellClass: "leading-snug py-1",
+    cellClass: "text-ink-muted",
   },
   {
-    colId: "paypal", headerName: "PayPal ids", width: 220, autoHeight: true, sortable: false, cellRenderer: PayPalIds,
+    colId: "paypal", headerName: "PayPal receipt", width: 300, sortable: false, cellRenderer: PayPalIds,
     // Only used by CSV export; the cell itself renders PayPalIds.
     valueGetter: (p) => [p.data?.paypalOrderId, p.data?.authorizationId, p.data?.captureId].filter(Boolean).join(" "),
   },
@@ -123,9 +89,7 @@ const columnDefs: ColDef<DecisionRow>[] = [
 const modeCol: ColDef<DecisionRow> = {
   colId: "mode", headerName: "Mode", width: 112, sortable: false,
   valueGetter: () => "Simulated",
-  cellRenderer: () => (
-    <span className="inline-flex rounded px-2 py-0.5 text-xs font-medium text-amber-200 ring-1 ring-inset ring-amber-400/40">Simulated</span>
-  ),
+  cellRenderer: () => <Badge tone="hold">Simulated</Badge>,
 };
 
 // Unknown future statuses get no class (and render their raw name via statusLabel).
@@ -144,35 +108,29 @@ const AUTO_HEIGHT_MAX = 10;
 function DecisionCard({ row, simulated, onSelect }: { row: DecisionRow; simulated: boolean; onSelect?: (row: DecisionRow) => void }) {
   const lead = headline(row.reasons);
   return (
-    <li className={`ag-st-${row.status === "unknown" ? "error" : row.status} rounded-lg border border-zinc-800 bg-zinc-900/60 text-sm`}>
-      <button
-        type="button"
-        onClick={() => onSelect?.(row)}
-        className="block w-full rounded-t-lg px-3 pt-3 pb-2 text-left focus-visible:outline-2 focus-visible:outline-emerald-400"
-      >
+    <li className={`ag-st-${row.status === "unknown" ? "error" : row.status} overflow-hidden rounded-md border border-line bg-surface-1 text-sm shadow-raise`}>
+      <button type="button" onClick={() => onSelect?.(row)} className="block w-full px-3.5 pt-3 pb-2.5 text-left">
         <span className="flex items-baseline justify-between gap-3">
-          <span className="min-w-0 truncate">
-            <span className="font-mono text-xs tabular-nums text-zinc-500">{formatTime(row.time)}</span>{" "}
-            <span className="font-medium text-zinc-100">{row.merchant}</span>
-          </span>
-          <span className="shrink-0 font-mono tabular-nums text-zinc-100">{formatUsd(row.amountUsd)}</span>
+          <span className="min-w-0 truncate font-medium text-ink">{row.merchant}</span>
+          <span className={cx("figures shrink-0", row.status === "blocked" ? "text-ink-muted line-through decoration-blocked/60" : "text-ink")}>{formatUsd(row.amountUsd)}</span>
         </span>
-        <span className="mt-1 block text-xs text-zinc-300 [overflow-wrap:anywhere]">{row.items}</span>
-        <span className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="mt-0.5 block text-xs text-ink-muted [overflow-wrap:anywhere]">{row.items}</span>
+        <span className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
           <VerdictPill data={row} />
-          <span className="text-zinc-300">{statusLabel(row.status)}</span>
+          <span className="text-ink-muted">{statusLabel(row.status)}</span>
           {row.status === "held" && <Countdown data={row} />}
-          {simulated && <span className="rounded px-2 py-0.5 font-medium text-amber-200 ring-1 ring-inset ring-amber-400/40">Simulated</span>}
+          {simulated && <Badge tone="hold">Simulated</Badge>}
+          <span className="figures ml-auto text-2xs text-ink-faint">{formatTime(row.time)}</span>
         </span>
         {lead && (
-          <span className="mt-2 block text-xs leading-snug text-zinc-400 [overflow-wrap:anywhere]">
-            {lead}
-            {row.reasons.length > 1 && <span className="text-zinc-600"> (+{row.reasons.length - 1} more)</span>}
+          <span className="mt-2 block text-xs leading-snug text-ink-muted [overflow-wrap:anywhere]">
+            {plainReason(lead)}
+            {row.reasons.length > 1 && <span className="text-ink-faint"> (+{row.reasons.length - 1} more)</span>}
           </span>
         )}
       </button>
       {(row.paypalOrderId || row.authorizationId || row.captureId) && (
-        <div className="border-t border-zinc-800 px-3 pb-2">
+        <div className="border-t border-line px-3.5 py-1.5">
           <PayPalIds data={row} />
         </div>
       )}
@@ -197,14 +155,17 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Filter by status" className="inline-flex flex-wrap rounded-md border border-zinc-800 p-0.5">
+        <div role="group" aria-label="Filter by status" className="inline-flex flex-wrap rounded-pill border border-line bg-surface-2 p-1">
           {["all", ...statuses].map((s) => (
             <button
               key={s}
               type="button"
               aria-pressed={status === s}
               onClick={() => setStatus(s)}
-              className={`rounded px-3 py-1 text-xs font-medium ${status === s ? "bg-emerald-500/15 text-emerald-300" : "text-zinc-400 hover:text-zinc-200"}`}
+              className={cx(
+                "h-7 rounded-pill px-3 text-xs transition-colors duration-[var(--duration-base)] ease-snap",
+                status === s ? "bg-surface-3 text-ink shadow-raise" : "text-ink-muted hover:text-ink",
+              )}
             >
               {s === "all" ? "All" : statusLabel(s)}
             </button>
@@ -216,12 +177,12 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
           placeholder="Search merchant, items, reasons…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 flex-1 basis-40 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+          className="h-9 min-w-0 flex-1 basis-40 rounded-pill border border-line bg-surface-2 px-4 text-sm text-ink placeholder:text-ink-faint focus:border-hold/50 focus:outline-none"
         />
         <button
           type="button"
           onClick={() => grid.current?.api.exportDataAsCsv({ fileName: "carthold-decisions.csv" })}
-          className="hidden rounded-md border border-white/10 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:border-white/25 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-emerald-400 sm:block"
+          className={buttonClasses({ variant: "ghost", size: "sm", className: "hidden sm:inline-flex" })}
         >
           Export CSV
         </button>
@@ -231,7 +192,7 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
         {rowData.map((r) => (
           <DecisionCard key={r.id} row={r} simulated={simulated} onSelect={onSelect} />
         ))}
-        {!rowData.length && <li className="py-6 text-center text-sm text-zinc-500">No decisions match.</li>}
+        {!rowData.length && <li className="py-6 text-center text-sm text-ink-faint">No decisions match.</li>}
       </ul>
       <div className="hidden sm:block" style={autoHeight ? undefined : { height }}>
         <AgGridReact<DecisionRow>
@@ -245,7 +206,7 @@ export function DecisionGrid({ rows, onSelect, height = 420, simulated = false }
           getRowId={(p) => p.data.id}
           animateRows
           tooltipShowDelay={300}
-          overlayNoRowsTemplate='<span style="color:#71717a">No decisions match.</span>'
+          overlayNoRowsTemplate='<span style="color:var(--ink-faint)">No decisions match.</span>'
           rowClass="cursor-pointer"
           onRowClicked={(e: RowClickedEvent<DecisionRow>) => {
             // ponytail: copy buttons live inside the row; a copy click is not a selection.

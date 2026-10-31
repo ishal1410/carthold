@@ -1,17 +1,22 @@
 import { colorSchemeDark, themeQuartz } from "ag-grid-community";
 
-// zinc-950/900/800 surfaces, emerald-500 accent — matches the landing page.
+// Night Escrow tokens (globals.css). CSS vars, so the light theme follows data-theme on <html>.
 export const gridTheme = themeQuartz.withPart(colorSchemeDark).withParams({
-  backgroundColor: "#09090b",
-  chromeBackgroundColor: "#18181b",
-  oddRowBackgroundColor: "#0c0c0e",
-  foregroundColor: "#e4e4e7",
-  headerTextColor: "#a1a1aa",
-  borderColor: "#27272a",
-  accentColor: "#10b981",
-  selectedRowBackgroundColor: "rgba(16, 185, 129, 0.12)",
+  backgroundColor: "var(--surface-1)",
+  chromeBackgroundColor: "var(--surface-2)",
+  oddRowBackgroundColor: "var(--surface-1)",
+  rowHoverColor: "var(--surface-3)",
+  foregroundColor: "var(--ink)",
+  headerTextColor: "var(--ink-faint)",
+  headerFontWeight: 500,
+  borderColor: "var(--line)",
+  rowBorder: { color: "var(--line)" },
+  wrapperBorder: { color: "var(--line)" },
+  columnBorder: false,
+  accentColor: "var(--hold)",
+  selectedRowBackgroundColor: "color-mix(in oklab, var(--hold) 10%, transparent)",
   fontFamily: "inherit",
   fontSize: 13,
-  spacing: 6,
-  wrapperBorderRadius: 8,
+  spacing: 7,
+  wrapperBorderRadius: 14,
 });
