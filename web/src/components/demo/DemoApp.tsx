@@ -87,6 +87,12 @@ function Demo({ fixture }: { fixture: boolean }) {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [reveal, setReveal] = useState<{ row: DecisionRow; text: string | null } | null>(null);
   const [view, setView] = useState<View>("verdicts");
+  /** Row whose PayPal popup closed with no approval (QA2 #1): its hold card shows the judge hint as a notice. */
+  const [nudged, setNudged] = useState<string | null>(null);
+  const guardRef = useRef(guard);
+  useEffect(() => {
+    guardRef.current = guard;
+  });
   const esRef = useRef<EventSource | null>(null);
   // Synchronous guards: a state-based `disabled` only lands after a re-render, so same-tick double clicks got through (#13, #17).
   const startingRef = useRef(false);
@@ -215,7 +221,19 @@ function Demo({ fixture }: { fixture: boolean }) {
       w?.close();
       return setError(`Could not open PayPal: ${actionError(status, msg)}`);
     }
-    if (w) return void w.location.replace(url);
+    if (w) {
+      w.location.replace(url);
+      setNudged(null);
+      // Popup closed and the row is still waiting: nobody approved. The grace period lets a late return message land first.
+      const poll = setInterval(() => {
+        if (!w.closed) return;
+        clearInterval(poll);
+        setTimeout(() => {
+          if (guardRef.current.rows.find((r) => r.id === row.id)?.status === "awaiting_payer") setNudged(row.id);
+        }, 2000);
+      }, 500);
+      return;
+    }
     try {
       sessionStorage.setItem(PAYER_BACK_KEY, JSON.stringify({ run: runId, url: window.location.href }));
     } catch {}
@@ -224,7 +242,7 @@ function Demo({ fixture }: { fixture: boolean }) {
 
   /** PayPal sent the buyer back: tell the server (it checks the order id and authorizes), or note a buyer cancel. */
   async function payerReturned(m: PayerReturn) {
-    if (m.cancelled) return setError("PayPal approval was cancelled. The payment stays waiting until it expires, or you can cancel it.");
+    if (m.cancelled) return setNudged(m.row);
     if (!ownerToken || decidingRef.current.has(m.row)) return;
     decidingRef.current.add(m.row);
     setBusy((b) => ({ ...b, [m.row]: true }));
@@ -376,7 +394,7 @@ function Demo({ fixture }: { fixture: boolean }) {
             <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:mt-10 lg:grid-cols-12 lg:gap-10">
               <Trace events={events} phase={phase} mode={runMode} rows={guard.rows} viewOnly={viewOnly} className={cx("lg:col-span-7 lg:max-h-[calc(100dvh-10rem)]", show("trace"))} />
               <div className={cx("lg:sticky lg:top-24 lg:col-span-5 lg:self-start", show("verdicts"))}>
-                <VerdictStack guard={guard} busy={busy} simulated={simulated} viewOnly={viewOnly} onDecide={decide} onReveal={openReveal} />
+                <VerdictStack guard={guard} busy={busy} simulated={simulated} fixture={fixture} nudged={nudged} viewOnly={viewOnly} onDecide={decide} onReveal={openReveal} />
               </div>
             </div>
             <section aria-labelledby="log-h" className={cx("mt-6 min-w-0 lg:mt-16", show("log"))}>
@@ -420,7 +438,7 @@ function RunBar(p: {
     { id: "log", label: "Log" },
   ];
   return (
-    <div className="sticky top-[4.25rem] z-20 mt-3 border-y border-line bg-canvas/95 backdrop-blur-xl">
+    <div className="z-20 mt-3 border-y lg:sticky lg:top-[4.25rem] border-line bg-canvas/95 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 md:px-6">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {p.fixture ? (
@@ -478,12 +496,12 @@ function Kpis({ guard }: { guard: GuardState }) {
       <div className="min-w-0">
         <dt className="flex items-center gap-1.5 text-2xs text-ink-muted">
           <Hourglass aria-hidden strokeWidth={1.5} className="size-3.5 text-hold" />
-          Held for you
+          Held in PayPal
         </dt>
         <dd className={cx("text-base md:text-xl", held ? "text-hold" : "text-ink-muted")}>
           <AnimatedNumber value={heldUsd} />
           {awaitingUsd > 0 && (
-            <span className="figures mt-1 block text-2xs text-ink-muted">{usd(awaitingUsd)} waiting for PayPal approval</span>
+            <span className="figures mt-1 block text-2xs text-ink-muted">+{usd(awaitingUsd)} reserved, awaiting approval</span>
           )}
         </dd>
       </div>
@@ -500,7 +518,7 @@ function Kpis({ guard }: { guard: GuardState }) {
         <dt className="flex items-center justify-between gap-2 text-2xs text-ink-muted">
           <span className="inline-flex items-center gap-1.5">
             <Wallet aria-hidden strokeWidth={1.5} className="size-3.5 text-paid" />
-            Committed
+            Budget used
           </span>
           <span className="figures max-sm:hidden">of {usd(MANDATE.budgetUsd)}</span>
         </dt>
@@ -509,7 +527,7 @@ function Kpis({ guard }: { guard: GuardState }) {
           <span
             className="mt-1 flex h-1.5 overflow-hidden rounded-pill bg-surface-3"
             role="meter"
-            aria-label={`Committed ${usd(guard.committedUsd)} of ${usd(MANDATE.budgetUsd)} budget`}
+            aria-label={`Budget used ${usd(guard.committedUsd)} of ${usd(MANDATE.budgetUsd)} budget`}
             aria-valuemin={0}
             aria-valuemax={MANDATE.budgetUsd}
             aria-valuenow={guard.committedUsd}
@@ -708,7 +726,7 @@ function GhostPreview() {
       <p className="mb-3 text-xs text-ink-faint">What a finished run looks like</p>
       <div aria-hidden inert className="pointer-events-none select-none space-y-2 opacity-60 [mask-image:linear-gradient(#000_60%,transparent_98%)]">
         <Panel tone="hold" as="div">
-          <StatusPill status="hold" label="Held for you" />
+          <StatusPill status="hold" label="Held in PayPal" />
           <div className="mt-5 flex items-start justify-between gap-4">
             <div>
               <p className="figures text-money">$30.00</p>

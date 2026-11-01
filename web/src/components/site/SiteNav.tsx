@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ButtonIcon, buttonClasses, cx } from "@/components/ui";
-import { NAV_LINKS, RECORDED_RUN_HREF, isStorePage } from "./links";
+import { NAV_LINKS, RECORDED_RUN_HREF, REPO_HREF, isStorePage } from "./links";
 import { Wordmark } from "./Wordmark";
 
 function isActive(pathname: string, href: string) {
@@ -72,6 +72,14 @@ export function SiteNav({ variant }: SiteNavProps) {
               </li>
             );
           })}
+          <li>
+            <a
+              href={REPO_HREF}
+              className="rounded-pill px-3 py-1.5 text-sm text-ink-muted transition-colors duration-[var(--duration-fast)] ease-snap hover:text-ink"
+            >
+              Source on GitHub
+            </a>
+          </li>
         </ul>
 
         <div className="flex items-center gap-2">
@@ -130,6 +138,18 @@ export function SiteNav({ variant }: SiteNavProps) {
               </li>
             );
           })}
+          <li
+            className={cx("transition-[opacity,transform] duration-[var(--duration-slow)] ease-out", open ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0")}
+            style={{ transitionDelay: `${NAV_LINKS.length * 40}ms` }}
+          >
+            <a
+              href={REPO_HREF}
+              onClick={() => setOpen(false)}
+              className="flex h-12 items-center rounded-[var(--radius-md)] px-4 font-display text-lg text-ink-muted"
+            >
+              Source on GitHub
+            </a>
+          </li>
         </ul>
         <div className="border-t border-line p-2 pt-3">{cta}</div>
       </div>

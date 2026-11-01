@@ -35,7 +35,7 @@ function buildEvents(): Ev[] {
 }
 
 const statusOf: Record<string, Status> = { blocked: "block", captured: "captured", held: "hold", voided: "voided" };
-const verdictWord: Record<string, string> = { blocked: "Blocked", captured: "Paid", held: "Held for you" };
+const verdictWord: Record<string, string> = { blocked: "Blocked", captured: "Paid", held: "Held in PayPal" };
 
 function headline(row: Row): string {
   const inspector = row.reasons.find((r) => r.startsWith("inspector:"));
@@ -85,7 +85,7 @@ export function RecordedReplay() {
           <Panel as="div" aria-label="Recorded run summary">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="info">Recorded run</Badge>
-              <span className="text-xs text-ink-faint">Real guard code, mock PayPal ids</span>
+              <span className="text-xs text-ink-faint">Real guard code, mock PayPal ids. Live runs use the PayPal sandbox.</span>
             </div>
             <p className="mt-5 text-sm text-ink-muted">The shopper asked</p>
             <blockquote className="mt-1 font-display text-xl font-medium tracking-tight text-pretty text-ink">

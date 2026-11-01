@@ -42,13 +42,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col bg-canvas text-ink">
         <a
-          href="#main"
+          href="#content"
           className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-40 focus:rounded-pill focus:bg-hold focus:px-4 focus:py-2 focus:text-hold-ink"
         >
           Skip to content
         </a>
         <SiteNav />
-        {children}
+        {/* Skip-link target. Cache Components keeps visited pages in the DOM (hidden), so an id on each page's <main> would repeat. */}
+        <div id="content" tabIndex={-1} className="flex flex-1 flex-col outline-none">
+          {children}
+        </div>
         <SiteFooter />
       </body>
     </html>

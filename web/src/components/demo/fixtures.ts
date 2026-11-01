@@ -91,7 +91,7 @@ export function fixtureEvents(): AgentEvent[] {
   ev.push({
     type: "done",
     reason: "final_answer",
-    text: "Bought the Morning Ritual Blend ($18, paid). The $30 Basecamp mug is HELD and waiting for your approval. The gift card bundle and the mug-plus-kit order were blocked.",
+    text: "Bought the Morning Ritual Blend ($18, paid). The $30 Basecamp mug is held in PayPal (authorized, not taken) until you release or cancel it. The gift card bundle and the mug-plus-kit order were blocked.",
   });
   return ev;
 }

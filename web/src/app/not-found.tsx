@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Page not found | CartHold" };
 
 export default function NotFound() {
   return (
-    <main id="main" className="relative flex flex-1 items-center overflow-hidden">
+    <main className="relative flex flex-1 items-center overflow-hidden">
       <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50" />
       <div className="relative mx-auto w-full max-w-6xl px-4 py-24 md:px-6 md:py-32">
         <StatusPill status="voided" label="404, nothing charged" />
@@ -14,8 +14,7 @@ export default function NotFound() {
           There is no page at this address.
         </h1>
         <p className="mt-5 max-w-xl text-lg text-pretty text-ink-muted">
-          The link may be old. Two demo stores were renamed on October 31: Trailhead Outfitters is now Northpine, and
-          GiftHub is now Giftlane.
+          The link may be old or mistyped. The demo and the four demo stores are a click away.
         </p>
         <div className="mt-9 flex flex-col gap-3 sm:flex-row">
           <Link href="/" className={buttonClasses({ size: "lg" })}>

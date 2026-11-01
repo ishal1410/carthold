@@ -33,7 +33,7 @@ export const correctMark = (ok: boolean) => (ok ? "✓" : "✗");
 const STATUS_LABEL: Record<string, string> = {
   pending: "Authorizing",
   blocked: "Blocked",
-  held: "Held",
+  held: "Held in PayPal",
   captured: "Paid",
   voided: "Voided",
   error: "PayPal error",

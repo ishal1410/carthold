@@ -1,7 +1,7 @@
 "use client";
 
 import { useInView } from "motion/react";
-import { useRef, useSyncExternalStore } from "react";
+import { type ReactNode, useRef, useSyncExternalStore } from "react";
 import { AnimatedNumber, cx } from "@/components/ui";
 
 export interface ProofFigure {
@@ -11,7 +11,7 @@ export interface ProofFigure {
   /** Shown after the number, e.g. "of 20". */
   suffix?: string;
   label: string;
-  note: string;
+  note: ReactNode;
   tone: "paid" | "hold" | "blocked" | "ink";
 }
 

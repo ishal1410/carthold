@@ -1,9 +1,11 @@
 "use client";
 import { Check, ChevronDown, ScanEye, TriangleAlert, Wallet, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { DecisionRow, GuardState } from "@/lib/guard/guard";
 import { AnimatedNumber, Badge, Button, Panel, Reveal, StatusPill, cx, type Status } from "@/components/ui";
+import { RECORDED_RUN_HREF } from "@/components/site";
 import { Receipt } from "./Receipt";
 import { hasInjection, headline, isInspectorBlock, isWarning, orderReasons, plainReason, reasonTags, stripWarning } from "./reasons";
 
@@ -114,11 +116,15 @@ function CountdownRing({ left, verb = "auto-void" }: { left: number; verb?: stri
 export type Decide = (row: DecisionRow, a: "approve" | "reject" | "paypal") => void;
 
 /** The open hold: the one thing on this screen that needs a human. */
-function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
+function HoldCard({ row, now, busy, simulated, fixture, nudge, viewOnly, onDecide }: {
   row: DecisionRow;
   now: number;
   busy: boolean;
   simulated: boolean;
+  /** Recorded run: mock ids, and no PayPal to approve in. */
+  fixture: boolean;
+  /** The PayPal popup closed without an approval: show the judge hint as a notice. */
+  nudge: boolean;
   /** Opened from a shared link: only the tab that started the run holds the owner token. */
   viewOnly: boolean;
   onDecide: Decide;
@@ -140,10 +146,10 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
           transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
         />
       )}
-      <Panel as="article" tone="hold" aria-label={`${payer ? "Waiting for PayPal approval" : "Held"}: ${usd(row.amountUsd)} at ${row.merchant}`}>
+      <Panel as="article" tone="hold" aria-label={`${payer ? "Waiting for PayPal approval" : "Held in PayPal"}: ${usd(row.amountUsd)} at ${row.merchant}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status="hold" label={payer ? "Waiting for PayPal approval" : "Held for you"} />
-          {simulated && <Badge tone="hold">Simulated</Badge>}
+          <StatusPill status="hold" label={payer ? "Waiting for PayPal approval" : "Held in PayPal"} />
+          {simulated && <SimBadge />}
         </div>
         {viewOnly && (
           <p className="mt-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-ink">
@@ -166,10 +172,14 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
           </p>
           {why.length ? <Tags tags={why} tone="hold" /> : plain.map((r) => <p key={r} className="text-xs text-ink-muted">{plainReason(r)}</p>)}
           <Warnings reasons={row.reasons} />
+          {payer && !viewOnly && <JudgeHint nudge={nudge} />}
+          {fixture && !payer && (
+            <p className="text-sm font-medium text-paid">Click Release to see the capture.</p>
+          )}
         </div>
         <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
           {payer ? (
-            <Button variant="approve" size="lg" icon={<Wallet strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "paypal")}>
+            <Button variant="approve" size="lg" icon={<Wallet strokeWidth={2} />} loading={busy} disabled={viewOnly} onClick={() => onDecide(row, "paypal")} className="max-sm:px-4 max-sm:text-sm">
               {busy ? "Working" : "Approve with PayPal"}
             </Button>
           ) : (
@@ -184,9 +194,32 @@ function HoldCard({ row, now, busy, simulated, viewOnly, onDecide }: {
             </span>
           </Button>
         </div>
-        <Receipt row={row} className="mt-4" />
+        <Receipt row={row} mock={fixture} className="mt-4" />
       </Panel>
     </Reveal>
+  );
+}
+
+/** The agent is scripted in Simulated mode, but its PayPal sandbox order is real (QA2 #3). */
+function SimBadge() {
+  return (
+    <span title="The agent is scripted. The guard and the PayPal sandbox order are real.">
+      <Badge tone="hold">Simulated agent</Badge>
+    </span>
+  );
+}
+
+/** QA2 #1: a judge without a sandbox buyer login needs a way forward. */
+function JudgeHint({ nudge }: { nudge: boolean }) {
+  return (
+    <p role={nudge ? "status" : undefined} className={cx("text-xs text-ink-muted", nudge && "rounded-md border border-info/30 bg-surface-2 px-3 py-2 text-sm text-ink")}>
+      {nudge && "PayPal closed without an approval. "}
+      Judges: the sandbox buyer login is in the Devpost testing instructions. No login?{" "}
+      <Link href={RECORDED_RUN_HREF} className="text-info underline underline-offset-4">
+        Watch the recorded run
+      </Link>{" "}
+      to see a full authorize → release → capture.
+    </p>
   );
 }
 
@@ -196,7 +229,7 @@ function PendingCard({ row, simulated }: { row: DecisionRow; simulated: boolean 
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status="unknown" label="Authorizing" />
-          {simulated && <Badge tone="hold">Simulated</Badge>}
+          {simulated && <SimBadge />}
         </div>
         <span className="figures text-lg text-ink">{usd(row.amountUsd)}</span>
       </div>
@@ -235,7 +268,7 @@ export function gist(row: DecisionRow, viewOnly = false): string {
 }
 
 /** Every settled verdict: a one-line chip that opens into the full story. */
-function VerdictChip({ row, simulated, viewOnly, onReveal }: { row: DecisionRow; simulated: boolean; viewOnly: boolean; onReveal: (row: DecisionRow) => void }) {
+function VerdictChip({ row, simulated, fixture, viewOnly, onReveal }: { row: DecisionRow; simulated: boolean; fixture: boolean; viewOnly: boolean; onReveal: (row: DecisionRow) => void }) {
   const [open, setOpen] = useState(false);
   const reduce = useReducedMotion();
   const pill = PILL[row.status] ?? { status: "unknown" as Status, label: String(row.status) };
@@ -272,7 +305,7 @@ function VerdictChip({ row, simulated, viewOnly, onReveal }: { row: DecisionRow;
           >
             <p className="flex flex-wrap items-center gap-2 text-xs text-ink-muted [overflow-wrap:anywhere]">
               {row.items}
-              {simulated && <Badge tone="hold">Simulated</Badge>}
+              {simulated && <SimBadge />}
             </p>
             {blocked && (
               <>
@@ -306,7 +339,7 @@ function VerdictChip({ row, simulated, viewOnly, onReveal }: { row: DecisionRow;
                 {all.map((r) => (isWarning(r) ? <ReasonLine key={r} r={r} /> : <li key={r} className="text-ink-muted">{plainReason(r)}</li>))}
               </ul>
             )}
-            <Receipt row={row} />
+            <Receipt row={row} mock={fixture} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -314,10 +347,13 @@ function VerdictChip({ row, simulated, viewOnly, onReveal }: { row: DecisionRow;
   );
 }
 
-export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecide, onReveal }: {
+export function VerdictStack({ guard, busy, simulated, fixture = false, nudged = null, viewOnly = false, onDecide, onReveal }: {
   guard: GuardState;
   busy: Record<string, boolean>;
   simulated: boolean;
+  fixture?: boolean;
+  /** Row whose PayPal popup closed without an approval. */
+  nudged?: string | null;
   viewOnly?: boolean;
   onDecide: Decide;
   onReveal: (row: DecisionRow) => void;
@@ -342,7 +378,7 @@ export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecid
         {live.map((r) => (
           <li key={r.id}>
             {r.status === "held" || r.status === "awaiting_payer" ? (
-              <HoldCard row={r} now={now} busy={!!busy[r.id]} simulated={simulated} viewOnly={viewOnly} onDecide={onDecide} />
+              <HoldCard row={r} now={now} busy={!!busy[r.id]} simulated={simulated} fixture={fixture} nudge={nudged === r.id} viewOnly={viewOnly} onDecide={onDecide} />
             ) : (
               <PendingCard row={r} simulated={simulated} />
             )}
@@ -357,7 +393,7 @@ export function VerdictStack({ guard, busy, simulated, viewOnly = false, onDecid
           <ul className="flex flex-col gap-2" aria-live="polite">
             {settled.map((r) => (
               <li key={r.id}>
-                <VerdictChip row={r} simulated={simulated} viewOnly={viewOnly} onReveal={onReveal} />
+                <VerdictChip row={r} simulated={simulated} fixture={fixture} viewOnly={viewOnly} onReveal={onReveal} />
               </li>
             ))}
           </ul>

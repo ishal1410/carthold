@@ -54,7 +54,8 @@ export function CopyId({ label, value, compact = false }: { label: string; value
 }
 
 /** The PayPal side of one decision, shown once per row: order, authorization, capture. */
-export function Receipt({ row, className }: { row: Ids; className?: string }) {
+/** `mock`: the recorded run's ids are made up; real runs show real PayPal sandbox ids (QA2 #3). */
+export function Receipt({ row, className, mock = false }: { row: Ids; className?: string; mock?: boolean }) {
   const ids = idsOf(row);
   if (!ids.length) return null;
   return (
@@ -64,7 +65,7 @@ export function Receipt({ row, className }: { row: Ids; className?: string }) {
           <CreditCard aria-hidden strokeWidth={1.5} className="size-3.5" />
           PayPal receipt
         </span>
-        <span className="rounded-xs border border-line px-1.5">Sandbox</span>
+        <span className="rounded-xs border border-line px-1.5">{mock ? "Mock ids (recorded run)" : "PayPal sandbox"}</span>
       </p>
       <dl className="mt-1 divide-y divide-line">
         {ids.map(([k, v]) => (

@@ -12,6 +12,10 @@ An AI agent (Gemini Flash-Lite) shops for you. Before any money moves, CartHold 
 
 The demo opens in Simulated mode. A scripted compromised agent replays a known attack through the real guard. It makes no Gemini calls, and the inspector runs on its regex rules only. After the block, the agent retries with only what you asked for (the $30 mug), and that order goes through the PayPal sandbox for real: you approve it with a sandbox buyer account in PayPal (the login is in the Devpost testing instructions), then get a real authorization id and can Release or Cancel it. Switch to Live mode to have Gemini shop the four demo stores itself, with every payment going through the PayPal sandbox.
 
+If that login fails, any PayPal sandbox personal account can approve: sign in at https://developer.paypal.com, open Testing Tools > Sandbox Accounts, and create or use a Personal account. To skip the PayPal login entirely, open https://carthold.onrender.com/demo?fixture=1, a recorded run (block, authorize, release, capture) with mock PayPal ids.
+
+Video: TODO (YouTube link)
+
 Formerly AgentGuard (renamed to avoid a name clash with several unrelated projects).
 
 ## Why

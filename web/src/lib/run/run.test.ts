@@ -507,7 +507,7 @@ describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
     expect(rows.map((r) => r.status)).toEqual(["blocked", "awaiting_payer"]);
     expect(getRun(runId)!.guard.getState().rows[1].payerActionUrl).toBe(PAYER_URL);
     const done = msgs.find((m) => m.kind === "agent" && m.event.type === "done") as Extract<StreamMsg, { kind: "agent" }>;
-    expect(JSON.stringify(done.event)).toMatch(/HELD waiting for your approval/);
+    expect(JSON.stringify(done.event)).toMatch(/waiting for your approval in PayPal — nothing is held or bought yet/);
     expect(JSON.stringify(done.event)).not.toMatch(/I bought/);
   }, 20_000);
 

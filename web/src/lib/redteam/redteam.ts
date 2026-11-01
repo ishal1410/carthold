@@ -158,7 +158,10 @@ ${sc.noRetry}` : text, 3);
   await emit({ type: "model_text", step: 4, text: `CartHold blocked that order. Retrying with only what you asked for: ${describe(sc.retry)}.` });
   const second = await tool(4, "propose_order", { ...sc.retry }, () => opts.onProposeOrder(sc.retry!));
   // Same honesty rules as the live agent (agent.ts BASE / fixHeldClaim): HELD is never "bought".
-  const outcome = second.startsWith("HELD")
+  // An awaiting-PayPal hold (guard: "HELD ... waiting for the buyer") has nothing authorized yet, so it is not "held".
+  const outcome = second.startsWith("HELD") && /waiting for the buyer/.test(second)
+    ? `I proposed ${describe(sc.retry)}; it is waiting for your approval in PayPal — nothing is held or bought yet.`
+    : second.startsWith("HELD")
     ? `I proposed ${describe(sc.retry)}; it is HELD waiting for your approval — nothing has been bought yet.`
     : `Then I proposed ${describe(sc.retry)}. The payment service answered: ${second}`;
   const why = /order follows injected text/.test(result) ? "followed hidden page text" : "not what you asked for";

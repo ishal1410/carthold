@@ -4,7 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/agent/agent";
 import type { DecisionRow } from "@/lib/guard/guard";
-import { StatusPill, StreamItem, cx, type Tone } from "@/components/ui";
+import { StatusPill, StreamItem, cx, type Status, type Tone } from "@/components/ui";
 import { headline, plainReason, reasonTags, refusedText } from "./reasons";
 import { Tags, usd } from "./Verdicts";
 
@@ -45,6 +45,31 @@ export function holdUpdates(rows: DecisionRow[], viewOnly = false): string[] {
   return out;
 }
 
+const SETTLED_BADGE: Record<string, { status: Status; label: string }> = {
+  awaiting_payer: { status: "hold", label: "Waiting for PayPal approval" },
+  held: { status: "hold", label: "Held in PayPal" },
+  pending: { status: "unknown", label: "Authorizing" },
+  captured: { status: "captured", label: "Paid" },
+  voided: { status: "voided", label: "Voided" },
+  cancelled: { status: "voided", label: "Cancelled" },
+  expired: { status: "voided", label: "Expired" },
+  error: { status: "unknown", label: "PayPal error" },
+  unknown: { status: "unknown", label: "Unclear" },
+};
+
+/** Badge for a HELD propose_order result: the row's current status, so a later cancel/expiry/release shows (QA2 #2). */
+export function heldBadge(result: string, rows: DecisionRow[]): { status: Status; label: string } {
+  const row = rows.find(
+    (r) => r.verdict === "hold" && ((r.authorizationId && result.includes(`authorization ${r.authorizationId}`)) || (r.paypalOrderId && result.includes(`PayPal order ${r.paypalOrderId}`))),
+  );
+  return SETTLED_BADGE[row?.status ?? (/waiting for the buyer/.test(result) ? "awaiting_payer" : "held")] ?? SETTLED_BADGE.unknown;
+}
+
+/** "step N" on the first trace line of each step only, so labels line up with what happened in that step (QA2 #6). */
+export function stepLabels(steps: number[]): (string | undefined)[] {
+  return steps.map((s, i) => (i === 0 || steps[i - 1] !== s ? `step ${s}` : undefined));
+}
+
 /** The guard's answer to one propose_order, as a pill plus the few words that matter. */
 function GuardResult({ result, rows }: { result: string; rows: DecisionRow[] }) {
   if (result.startsWith("BLOCKED")) {
@@ -67,11 +92,11 @@ function GuardResult({ result, rows }: { result: string; rows: DecisionRow[] }) 
       </div>
     );
   }
-  const [status, label] = result.startsWith("HELD")
-    ? (["hold", "Held for you"] as const)
+  const { status, label } = result.startsWith("HELD")
+    ? heldBadge(result, rows)
     : result.startsWith("Paid")
-      ? (["captured", "Paid"] as const)
-      : (["unknown", "Unclear"] as const);
+      ? { status: "captured" as Status, label: "Paid" }
+      : { status: "unknown" as Status, label: "Unclear" };
   return (
     <p className="mt-2 flex flex-wrap items-center gap-2">
       <StatusPill status={status} label={label} size="sm" />
@@ -85,7 +110,7 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
   const updates = done ? holdUpdates(rows, viewOnly) : [];
   const last = events.at(-1);
   const announce =
-    !last ? "" : last.type === "tool_call" ? `Agent calls ${last.name}` : last.type === "tool_result" && last.name === "propose_order" ? refusedText(last.result, rows) : last.type === "done" ? "Agent finished" : "";
+    !last ? "" : last.type === "tool_call" ? `Agent calls ${last.name}` : last.type === "tool_result" && last.name === "propose_order" ? refusedText(last.result, rows) : last.type === "done" ? "The agent is done." : "";
 
   // Events present on first paint (a replay or the recording) stagger in; later live events land at once.
   const [batch, setBatch] = useState(0);
@@ -110,6 +135,8 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
       else items.push({ e, i });
     } else if (e.type === "tool_call" || e.type === "model_text") items.push({ e, i });
   });
+
+  const labels = stepLabels(items.map(({ e }) => ("step" in e ? e.step : 0)));
 
   return (
     <section aria-labelledby="trace-h" className={cx("flex min-h-0 flex-col", className)}>
@@ -144,10 +171,10 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
           }}
           className="relative min-h-0 flex-1 overflow-y-auto pr-1 before:absolute before:top-4 before:bottom-4 before:left-[3px] before:w-px before:bg-line"
         >
-          {items.map(({ e, result, i }) => {
+          {items.map(({ e, result, i }, n) => {
             if (e.type === "model_text")
               return (
-                <StreamItem key={i} index={idx(i)} tone="neutral" time={`step ${e.step}`} title={<span className="font-normal text-ink-muted">{e.text}</span>} className="[&>span>span]:bg-line-strong" />
+                <StreamItem key={i} index={idx(i)} tone="neutral" time={labels[n]} title={<span className="font-normal text-ink-muted">{e.text}</span>} className="[&>span>span]:bg-line-strong" />
               );
             if (e.type === "tool_call") {
               const t = TOOL[e.name] ?? { label: e.name, icon: Wrench };
@@ -160,6 +187,7 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
                   key={i}
                   index={idx(i)}
                   tone={tone}
+                  time={labels[n]}
                   title={
                     <span className="inline-flex items-center gap-1.5 text-ink">
                       <t.icon aria-hidden strokeWidth={1.5} className="size-3.5 text-ink-faint" />

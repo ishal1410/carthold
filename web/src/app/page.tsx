@@ -6,6 +6,7 @@ import { InjectionReveal, ProofStrip, RecordedReplay, RECORDED_RUN_HREF } from "
 import type { ProofFigure } from "@/components/site/ProofStrip";
 import { ButtonIcon, FlowDiagram, Panel, Reveal, SectionHeader, buttonClasses } from "@/components/ui";
 import corpus from "@/data/attacks/corpus.json";
+import heldout from "@/data/attacks/heldout.json";
 import { scoreCorpus, type CorpusEntry } from "@/lib/inspector/scorecard";
 
 const run = recorded as FixtureRun;
@@ -15,7 +16,9 @@ const blockedCount = run.rows.filter((r) => r.status === "blocked").length;
 // Scored at build time with the same function /api/scorecard serves.
 const score = scoreCorpus(corpus as CorpusEntry[]);
 const attacks = score.rows.filter((r) => r.label === "attack").length;
-const benign = score.total - attacks;
+// The honest pair: pages written after tuning, never used to adjust the rules.
+const unseen = scoreCorpus(heldout as CorpusEntry[]);
+const unseenAttacks = unseen.rows.filter((r) => r.label === "attack").length;
 
 const figures: ProofFigure[] = [
   { value: total("captured"), format: "usd", label: "Paid without asking", note: "One coffee blend, under the $25 ask-me limit.", tone: "paid" },
@@ -32,7 +35,16 @@ const figures: ProofFigure[] = [
     format: "count",
     suffix: `of ${attacks}`,
     label: "Hidden-text attacks flagged",
-    note: `Regex backstop alone, on our own ${score.total}-page test set. ${score.falsePositives} of ${benign} honest pages flagged.`,
+    note: (
+      <>
+        That is our tuning set. On {unseenAttacks} attack pages it never saw, it caught{" "}
+        {unseen.attacksBlocked}. Regex backstop alone, {score.falsePositives + unseen.falsePositives} honest pages
+        flagged.{" "}
+        <Link href="/demo/scorecard" className="underline decoration-line-strong underline-offset-2 hover:text-ink">
+          See the scorecard
+        </Link>
+      </>
+    ),
     tone: "ink",
   },
 ];
@@ -57,18 +69,18 @@ const steps = [
 
 const real = [
   "The guard code: rules, provenance checks and the page inspector",
-  "PayPal sandbox orders, authorizations, captures and voids",
+  "Live runs use the real PayPal sandbox: orders, authorizations, buyer approval on PayPal, captures and voids",
   "A Gemini agent shopping in live mode",
 ];
 const simulated = [
   "The four stores are demo pages we wrote, hidden notes included",
   "The compromised agent replays a known attack, because a live model does not fall for it every time",
-  "Sandbox money only. The recorded run on this page uses mock PayPal ids",
+  "The recorded run on this page uses mock PayPal ids. Live runs use real sandbox ids, and sandbox money only",
 ];
 
 export default function Home() {
   return (
-    <main id="main" className="flex-1">
+    <main className="flex-1">
       {/* Hero */}
       <section aria-labelledby="hero-title" className="relative overflow-hidden">
         <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-70" />

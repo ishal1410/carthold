@@ -3,7 +3,7 @@ import { verdictLabel } from "../grid/format";
 import { actionError, heldKpi, runSettled, runStartError } from "./errors";
 import type { DecisionRow, GuardState } from "@/lib/guard/guard";
 import { fixtureState, settleFixtureHold } from "./fixtures";
-import { holdUpdates } from "./Trace";
+import { heldBadge, holdUpdates, stepLabels } from "./Trace";
 import { gist, paidUsd } from "./Verdicts";
 
 const heldId = () => fixtureState().pendingHolds[0];
@@ -130,5 +130,32 @@ describe("A5: Held for you KPI matches the hold bar", () => {
   it("held money and awaiting money are reported separately", () => {
     const g = state([row("d1", "held", 12.5), row("d2", "awaiting_payer", 30), row("d3", "awaiting_payer", 4.25), row("d4", "captured", 9)], 12.5);
     expect(heldKpi(g)).toEqual({ heldUsd: 12.5, awaitingUsd: 34.25 });
+  });
+});
+
+describe("QA2 #2: trace badge for a HELD result follows the row's final status", () => {
+  const AWAIT = "HELD for human approval: waiting for the buyer to approve PayPal order O1. Nothing is authorized or charged yet.";
+  const HELD = "HELD for human approval: authorization A1";
+  const row = (status: string, extra: object = {}) =>
+    ({ id: "d1", merchant: "M", items: "i", amountUsd: 30, verdict: "hold", reasons: [], status, paypalOrderId: "O1", ...extra }) as unknown as DecisionRow;
+  it("awaiting PayPal says so, held says held in PayPal", () => {
+    expect(heldBadge(AWAIT, [row("awaiting_payer")]).label).toBe("Waiting for PayPal approval");
+    expect(heldBadge(HELD, [row("held", { authorizationId: "A1" })]).label).toBe("Held in PayPal");
+  });
+  it("settled rows show their outcome", () => {
+    expect(heldBadge(AWAIT, [row("cancelled")]).label).toBe("Cancelled");
+    expect(heldBadge(AWAIT, [row("expired")]).label).toBe("Expired");
+    expect(heldBadge(HELD, [row("captured", { authorizationId: "A1" })]).label).toBe("Paid");
+    expect(heldBadge(HELD, [row("voided", { authorizationId: "A1" })]).label).toBe("Voided");
+  });
+  it("no matching row falls back to the result text", () => {
+    expect(heldBadge(AWAIT, []).label).toBe("Waiting for PayPal approval");
+    expect(heldBadge(HELD, []).label).toBe("Held in PayPal");
+  });
+});
+
+describe("QA2 #6: step labels sit on the first line of each step", () => {
+  it("labels only the first item per step", () => {
+    expect(stepLabels([1, 1, 2, 2, 2, 3])).toEqual(["step 1", undefined, "step 2", undefined, undefined, "step 3"]);
   });
 });

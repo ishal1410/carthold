@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_LINKS, RECORDED_RUN_HREF, isStorePage } from "./links";
+import { NAV_LINKS, README_HREF, RECORDED_RUN_HREF, REPO_HREF, isStorePage } from "./links";
 import { Wordmark } from "./Wordmark";
 
 export function SiteFooter() {
@@ -47,6 +47,16 @@ export function SiteFooter() {
               <Link href="/#honesty" className="text-ink-muted hover:text-ink">
                 What is real here
               </Link>
+            </li>
+            <li>
+              <a href={REPO_HREF} className="text-ink-muted hover:text-ink">
+                Source on GitHub
+              </a>
+            </li>
+            <li>
+              <a href={README_HREF} className="text-ink-muted hover:text-ink">
+                How to test (README)
+              </a>
             </li>
           </ul>
         </div>

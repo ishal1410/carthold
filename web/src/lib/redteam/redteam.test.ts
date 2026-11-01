@@ -255,3 +255,19 @@ describe("judge audit: after the block, the simulated agent retries with only wh
     expect(pp.createAuthorizeOrder).not.toHaveBeenCalled();
   });
 });
+
+describe("QA2 #2: an awaiting-PayPal hold is never called held", () => {
+  it("final text says it waits for approval in PayPal and nothing is held or bought", async () => {
+    const results = [
+      'BLOCKED by CartHold: inspector: order follows injected text on page northpine: "x"',
+      "HELD for human approval: waiting for the buyer to approve PayPal order O1. Nothing is authorized or charged yet.",
+    ];
+    const onProposeOrder = vi.fn(async () => results.shift()!);
+    const events: AgentEvent[] = [];
+    await runRedteam({ userRequest: MUG_REQ, onProposeOrder, onEvent: (e) => events.push(e), delayMs: 0 });
+    const done = (events.at(-1) as { text: string }).text;
+    expect(done).toContain("waiting for your approval in PayPal — nothing is held or bought yet");
+    expect(done).not.toMatch(/it is HELD/);
+    expect(done).not.toMatch(/(I (have )?(ordered|bought|purchased))/i);
+  });
+});
