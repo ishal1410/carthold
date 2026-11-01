@@ -7,7 +7,7 @@ vi.mock("server-only", () => ({}));
 import { MAX_HOLD_LIFETIME_MS } from "../guard/guard";
 import { resetLimits } from "../run/limits";
 import { resetTokenCache } from "./client";
-import { handleWebhook, sweepOrphanedHolds, toPayPalEvent } from "./webhook";
+import { handleWebhook, rfc3339, sweepOrphanedHolds, toPayPalEvent } from "./webhook";
 
 const HEADERS = {
   "content-type": "application/json",
@@ -231,12 +231,13 @@ describe("sweepOrphanedHolds (crash recovery from PayPal's own event log)", () =
     expect(calls.filter((c) => c.endsWith("/void"))).toEqual(["POST /v2/payments/authorizations/A1/void"]);
     const list = calls.find((c) => c.startsWith("GET /v1/notifications/webhooks-events"))!;
     expect(list).toContain("event_type=PAYMENT.AUTHORIZATION.CREATED");
-    expect(list).toContain("start_time=2026-10-01T12%3A01%3A00.000Z"); // 30 days back: authorizations are valid 29 days
+    expect(list).toContain("start_time=2026-10-01T12%3A01%3A00Z"); // no fractional seconds: PayPal 400s on ".000Z" // 30 days back: authorizations are valid 29 days
     expect(calls).not.toContain("GET /v2/checkout/orders/O4"); // authorized after boot: belongs to this process
     // M1: A6 is 5 min before boot, younger than the max hold lifetime: maybe a live hold of another instance
     // (zero-downtime deploy overlap) or a local dev run. Never voided, never even looked up.
     expect(calls).not.toContain("GET /v2/checkout/orders/O6");
-    expect(list).toContain(`end_time=${encodeURIComponent(new Date(BOOT + 60_000 - MAX_HOLD_LIFETIME_MS - 60_000).toISOString())}`);
+    expect(list).toContain(`end_time=${encodeURIComponent(rfc3339(BOOT + 60_000 - MAX_HOLD_LIFETIME_MS - 60_000))}`);
+    expect(list).not.toMatch(/\.\d{3}Z/);
     expect(calls).toContain("GET /v1/notifications/webhooks-events?page=2"); // followed links rel=next
   });
 

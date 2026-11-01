@@ -99,6 +99,9 @@ type RawOrder = { purchase_units?: { description?: string; payments?: { authoriz
  * hold of another instance (Render zero-downtime deploy overlap) or a local dev run on the same sandbox app. Window is 30 days (an authorization is valid 29). Best effort: never throws; returns the voided ids.
  * ponytail: 10 pages max and serial calls; enough for a demo app's volume, page further if that ever falls short.
  */
+/** PayPal's webhooks-events filter rejects fractional seconds ("...41.829Z" -> 400 VALIDATION_ERROR, live 2026-10-31). */
+export const rfc3339 = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
 export async function sweepOrphanedHolds(o: { isKnown: (authId: string) => boolean; now?: number }): Promise<string[]> {
   const voided: string[] = [];
   // No live hold can outlive MAX_HOLD_LIFETIME_MS (awaiting + held windows), in this process or any other, so an
@@ -106,8 +109,8 @@ export async function sweepOrphanedHolds(o: { isKnown: (authId: string) => boole
   const cutoff = (o.now ?? Date.now()) - MAX_HOLD_LIFETIME_MS - ORPHAN_MARGIN_MS;
   const q = new URLSearchParams({
     event_type: "PAYMENT.AUTHORIZATION.CREATED",
-    start_time: new Date((o.now ?? Date.now()) - 30 * DAY).toISOString(),
-    end_time: new Date(cutoff).toISOString(),
+    start_time: rfc3339((o.now ?? Date.now()) - 30 * DAY),
+    end_time: rfc3339(cutoff),
     page_size: "50",
   });
   let path: string | undefined = `/v1/notifications/webhooks-events?${q}`;

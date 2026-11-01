@@ -8,6 +8,11 @@ export function registerSigterm() {
   if (g.__cartholdSigterm) return;
   g.__cartholdSigterm = true;
   process.once("SIGTERM", () => {
-    void Promise.resolve().then(() => g.__cartholdVoidAll?.()).catch(() => {}).finally(() => process.exit(143));
+    // Logged so Render's log shows whether shutdown ran at all (2026-10-31: two live holds survived a deploy).
+    console.error("[carthold] SIGTERM: voiding held authorizations before exit");
+    void Promise.resolve()
+      .then(() => g.__cartholdVoidAll?.())
+      .then((r) => console.error("[carthold] SIGTERM sweep done:", JSON.stringify(r ?? null)), (e) => console.error("[carthold] SIGTERM sweep failed:", e))
+      .finally(() => process.exit(143));
   });
 }
