@@ -1,9 +1,12 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { verdictLabel } from "../grid/format";
-import { actionError, heldKpi, runSettled, runStartError } from "./errors";
+import { actionError, heldKpi, runBlockReason, runSettled, runStartError } from "./errors";
+import type { AgentEvent } from "@/lib/agent/agent";
 import type { DecisionRow, GuardState } from "@/lib/guard/guard";
-import { fixtureState, settleFixtureHold } from "./fixtures";
-import { heldBadge, holdUpdates, stepLabels } from "./Trace";
+import { FIXTURE_STEPS, fixtureEvents, fixtureState, settleFixtureHold } from "./fixtures";
+import { Trace, heldBadge, holdUpdates, stepLabels } from "./Trace";
 import { gist, paidUsd } from "./Verdicts";
 
 const heldId = () => fixtureState().pendingHolds[0];
@@ -157,5 +160,50 @@ describe("QA2 #2: trace badge for a HELD result follows the row's final status",
 describe("QA2 #6: step labels sit on the first line of each step", () => {
   it("labels only the first item per step", () => {
     expect(stepLabels([1, 1, 2, 2, 2, 3])).toEqual(["step 1", undefined, "step 2", undefined, undefined, "step 3"]);
+  });
+});
+
+describe("QA3 UI fixes", () => {
+  const held = (extra: Partial<DecisionRow>) =>
+    ({ id: "d1", time: "2026-11-01T00:00:00Z", merchant: "Northpine Outfitters", items: "1x Mug", amountUsd: 30, verdict: "hold", reasons: [], status: "voided", ...extra }) as DecisionRow;
+
+  it("(e) a hold voided at shutdown reads as a server restart, not a timeout", () => {
+    const row = held({ decision: "system-voided", reasons: ["auto-voided: server shutting down"] });
+    expect(gist(row)).toBe("voided: server restarted");
+    expect(holdUpdates([row])[0]).toMatch(/voided when the server restarted/);
+    const payer = held({ status: "expired", decision: "system-voided" });
+    expect(gist(payer)).toBe("expired: server restarted");
+  });
+
+  it("(b) a new run is refused while a live hold waits; the recording can always reset", () => {
+    const g = { rows: [], pendingHolds: ["d1"], amountAtRiskUsd: 30, committedUsd: 30 } as GuardState;
+    expect(runBlockReason(g, false)).toMatch(/Release or cancel/);
+    expect(runBlockReason(g, true)).toBeNull();
+    expect(runBlockReason({ ...g, pendingHolds: [] }, false)).toBeNull();
+  });
+
+  it("(a, f) the finished summary is marked as of then, outcomes follow; max_steps text is shown", () => {
+    const row = held({ status: "cancelled", decision: "rejected" });
+    const done = (reason: "final_answer" | "max_steps") =>
+      renderToStaticMarkup(
+        createElement(Trace, { events: [{ type: "done", reason, text: "it is waiting for your approval in PayPal" } as AgentEvent], phase: "done", mode: "redteam", rows: [row] }),
+      );
+    const html = done("final_answer");
+    expect(html).toContain("it is waiting for your approval in PayPal");
+    expect(html).toContain("Since then");
+    expect(html).toMatch(/cancelled the \$30\.00 hold/);
+    expect(done("max_steps")).toContain("it is waiting for your approval in PayPal");
+  });
+
+  it("(h) the recording reads a store page before commenting on it", () => {
+    const ev = fixtureEvents();
+    FIXTURE_STEPS.forEach((s, i) => {
+      if (!s.read) return;
+      const step = i + 2;
+      const read = ev.findIndex((e) => e.type === "tool_result" && e.step === step && e.name === "read_store_page");
+      const think = ev.findIndex((e) => e.type === "model_text" && e.step === step);
+      expect(read).toBeGreaterThan(-1);
+      expect(think).toBeGreaterThan(read);
+    });
   });
 });

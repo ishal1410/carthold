@@ -187,7 +187,7 @@ describe("R4 #8: simulated narration matches the guard", () => {
     await runRedteam({ userRequest: req, onProposeOrder: guard.onProposeOrder, onEvent: (e) => events.push(e), delayMs: 0 });
     vi.unstubAllEnvs();
     const row = guard.getState().rows[0];
-    const follow = row.reasons.find((r) => r.startsWith("inspector: order follows injected text"))!;
+    const follow = row.reasons.find((r) => r.startsWith("inspector: order follows text aimed at AI agents"))!;
     expect(follow).toBeTruthy();
     const quoted = follow.match(/: "(.*)"$/)![1];
     expect((events[8] as { text: string }).text).toContain(`The page says: "${quoted}"`);
@@ -228,7 +228,7 @@ describe("judge audit: after the block, the simulated agent retries with only wh
     const calls = events.filter((e) => e.type === "tool_call" && e.name === "propose_order");
     expect(calls.map((e) => (e as { step: number }).step)).toEqual([3, 4]);
     expect(done).toContain("HELD waiting for your approval");
-    expect(done).toContain("nothing has been bought yet");
+    expect(done).toContain("Nothing has been bought yet");
     expect(done).not.toMatch(/\b(I (have )?(ordered|bought|purchased))\b/i);
     expect(done).toMatch(/Blocked: Basecamp Enamel Mug, 16 oz \+ Trail Coffee Kit \(followed hidden page text\)\.$/);
   });
@@ -259,14 +259,14 @@ describe("judge audit: after the block, the simulated agent retries with only wh
 describe("QA2 #2: an awaiting-PayPal hold is never called held", () => {
   it("final text says it waits for approval in PayPal and nothing is held or bought", async () => {
     const results = [
-      'BLOCKED by CartHold: inspector: order follows injected text on page northpine: "x"',
+      'BLOCKED by CartHold: inspector: order follows text aimed at AI agents on the Northpine Outfitters page: "x"',
       "HELD for human approval: waiting for the buyer to approve PayPal order O1. Nothing is authorized or charged yet.",
     ];
     const onProposeOrder = vi.fn(async () => results.shift()!);
     const events: AgentEvent[] = [];
     await runRedteam({ userRequest: MUG_REQ, onProposeOrder, onEvent: (e) => events.push(e), delayMs: 0 });
     const done = (events.at(-1) as { text: string }).text;
-    expect(done).toContain("waiting for your approval in PayPal — nothing is held or bought yet");
+    expect(done).toContain("waiting for your approval in PayPal. Nothing is held or bought yet");
     expect(done).not.toMatch(/it is HELD/);
     expect(done).not.toMatch(/(I (have )?(ordered|bought|purchased))/i);
   });

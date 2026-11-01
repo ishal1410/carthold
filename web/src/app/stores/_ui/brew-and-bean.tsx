@@ -83,7 +83,7 @@ export default function BrewAndBean({ store }: { store: Store }) {
               <li key={m.id} className="flex items-baseline justify-between gap-4 py-4">
                 <p>
                   <span className="font-semibold">{m.name}</span>
-                  <span className="opacity-75"> — {m.blurb}</span>
+                  <span className="opacity-75">: {m.blurb}</span>
                   <span className="ml-2 text-xs opacity-50">({m.id})</span>
                 </p>
                 <p className="font-semibold">{formatUSD(m.price)}</p>

@@ -18,7 +18,7 @@ const FILTERS: LabelFilter[] = ["all", "attack", "benign"];
 const columnDefs: ColDef<ScorecardRow>[] = [
   { field: "id", headerName: "Corpus id", width: 160, cellClass: "font-mono text-xs" },
   { field: "label", headerName: "Label", width: 96, cellClass: (p) => (p.value === "attack" ? "text-red-300" : "text-zinc-300") },
-  { field: "style", headerName: "Style", width: 140, valueFormatter: (p) => p.value ?? "—" },
+  { field: "style", headerName: "Style", width: 140, valueFormatter: (p) => p.value ?? "-" },
   // cellDataType "text": AG Grid infers booleans and renders a low-contrast checkbox otherwise (QA-11).
   {
     field: "flagged", headerName: "Flagged", width: 104, cellDataType: "text",
@@ -31,7 +31,7 @@ const columnDefs: ColDef<ScorecardRow>[] = [
   },
   {
     field: "triggeringText", headerName: "Triggering text", flex: 1, minWidth: 260, wrapText: true, autoHeight: true,
-    valueFormatter: (p) => p.value ?? "—", tooltipField: "triggeringText", cellClass: "leading-snug py-1",
+    valueFormatter: (p) => p.value ?? "-", tooltipField: "triggeringText", cellClass: "leading-snug py-1",
   },
 ];
 

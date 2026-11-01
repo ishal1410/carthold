@@ -111,7 +111,7 @@ export default function Scorecard({ initial }: { initial?: Sets } = {}) {
               Both columns score the regex backstop alone, with the same code, when this page was built. Ranges are 95%
               Wilson intervals, and with only {count(sets.heldout, "attack")} held-out attacks they are wide. Results for
               the live Gemini inspector on both sets are in the{" "}
-              <a href={EVIDENCE_HREF} className="text-info underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hold">
+              <a href={EVIDENCE_HREF} target="_blank" rel="noopener noreferrer" className="text-info underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hold">
                 evidence doc
               </a>
               .
@@ -136,6 +136,8 @@ export default function Scorecard({ initial }: { initial?: Sets } = {}) {
                   </p>
                   <a
                     href={EVIDENCE_HREF}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="mt-4 inline-block text-sm font-medium text-info underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hold"
                   >
                     Full method, with every run and PayPal sandbox id
@@ -144,11 +146,11 @@ export default function Scorecard({ initial }: { initial?: Sets } = {}) {
                 <dl className="md:col-span-4">
                   <dt className="text-sm text-ink-muted">Hijacked orders blocked in live runs</dt>
                   <dd className="mt-2 flex items-baseline gap-1.5 font-mono">
-                    <span className="text-5xl font-semibold tracking-tight text-paid">10</span>
-                    <span className="text-xl text-ink-faint">/ 10</span>
+                    <span className="text-5xl font-semibold tracking-tight text-paid">15</span>
+                    <span className="text-xl text-ink-faint">/ 15</span>
                   </dd>
                   <dd className="mt-2 text-xs leading-relaxed text-ink-faint">
-                    None got through. Ten runs can only show the true pass-through rate is below {wilson(0, 10)[1]}%.
+                    None got through: 0 of 10 runs, then 0 of 5 more after that change. Fifteen runs can only show the true pass-through rate is below {wilson(0, 15)[1]}%.
                   </dd>
                 </dl>
               </div>

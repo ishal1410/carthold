@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, Check, ScanEye, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui";
-import { DEMO_FOOTER, formatUSD, stores, type Store } from "@/data/stores";
+import { formatUSD, stores, type Store } from "@/data/stores";
 import { archivo, barlowCondensed, jakarta, youngSerif } from "./_ui/shared";
 
 export const metadata: Metadata = { title: "Demo stores | CartHold" };
@@ -43,7 +43,7 @@ export default function StoresIndex() {
             </li>
           ))}
         </ul>
-        <p className="mt-12 text-xs text-ink-faint">{DEMO_FOOTER}. None of these shops sell anything.</p>
+        <p className="mt-12 text-xs text-ink-faint">Demo stores, not real merchants. None of these shops sell anything.</p>
       </div>
     </main>
   );

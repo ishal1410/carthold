@@ -5,15 +5,24 @@ const RUN_WINDOW_MS = 10 * 60_000;
 const HOLD_LIMIT = 30;
 const HOLD_WINDOW_MS = 60_000;
 const STREAMS_PER_IP = 20;
-const WEBHOOK_LIMIT = 60;
+const WEBHOOK_LIMIT = 20;
+const WEBHOOK_GLOBAL_LIMIT = 120;
 const WEBHOOK_WINDOW_MS = 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 const MAX_WINDOWS = 10_000;
 
 type Windows = Map<string, { start: number; end: number; count: number }>;
 // R4 #3: run and hold windows live in separate maps, so spraying /api/runs can never fill the hold map.
-type State = { runs: Windows; holds: Windows; webhooks: Windows; day: string; live: number; simDay: string; sim: number; streams: Map<string, number> };
+// liveIp / simIp: per-IP daily caps (cso H1), keyed "<UTC day>|<ip>" so they reset at UTC midnight and old days expire from the map.
+type State = {
+  runs: Windows; holds: Windows; webhooks: Windows; webhooksAll: Windows; liveIp: Windows; simIp: Windows;
+  day: string; live: number; simDay: string; sim: number; streams: Map<string, number>;
+};
 const g = globalThis as unknown as { __cartholdLimits?: State };
-const fresh = (): State => ({ runs: new Map(), holds: new Map(), webhooks: new Map(), day: "", live: 0, simDay: "", sim: 0, streams: new Map() });
+const fresh = (): State => ({
+  runs: new Map(), holds: new Map(), webhooks: new Map(), webhooksAll: new Map(), liveIp: new Map(), simIp: new Map(),
+  day: "", live: 0, simDay: "", sim: 0, streams: new Map(),
+});
 const state = () => (g.__cartholdLimits ??= fresh());
 
 export const resetLimits = () => void (g.__cartholdLimits = fresh());
@@ -69,9 +78,34 @@ export const takeIpSlot = (ip: string, now = Date.now()) => takeSlot(state().run
 /** Counts one hold decision for ip (30/min). Call only after readJsonPost accepted the request. */
 export const takeHoldSlot = (ip: string, now = Date.now()) => takeSlot(state().holds, ip, HOLD_LIMIT, HOLD_WINDOW_MS, now, true);
 
-/** Counts one webhook POST for ip (60/min), before any PayPal OAuth / verify call. Fails closed when the map is
- *  full of live windows: PayPal retries a refused delivery for 3 days, a flood must not reach PayPal's rate limit. */
-export const takeWebhookSlot = (ip: string, now = Date.now()) => takeSlot(state().webhooks, ip, WEBHOOK_LIMIT, WEBHOOK_WINDOW_MS, now, false);
+/** Counts one webhook POST for ip (20/min), then against a global 120/min (cso L2), before any PayPal OAuth / verify
+ *  call. Fails closed when the map is full of live windows: PayPal retries a refused delivery for 3 days, a flood must
+ *  not reach PayPal's rate limit. ponytail: an address over the global cap still spends its own slot; fine at 20/min. */
+export const takeWebhookSlot = (ip: string, now = Date.now()) =>
+  takeSlot(state().webhooks, ip, WEBHOOK_LIMIT, WEBHOOK_WINDOW_MS, now, false) &&
+  takeSlot(state().webhooksAll, "*", WEBHOOK_GLOBAL_LIMIT, WEBHOOK_WINDOW_MS, now, false);
+
+const envCap = (name: string, dflt: number) => {
+  const n = Number(process.env[name] ?? dflt);
+  return Number.isFinite(n) ? n : dflt;
+};
+const ipDay = (mode: "live" | "redteam", ip: string, now: Date) =>
+  [mode === "live" ? state().liveIp : state().simIp, `${now.toISOString().slice(0, 10)}|${ip}`] as const;
+
+/** Counts one run against ip's daily (UTC) cap: LIVE_RUNS_PER_IP_DAY (default 4) or SIMULATED_RUNS_PER_IP_DAY
+ *  (default 15). Checked before the global daily caps, so one address cannot lock everyone else out (cso H1). */
+export function takeIpDaySlot(ip: string, mode: "live" | "redteam", now = new Date()): boolean {
+  const [windows, key] = ipDay(mode, ip, now);
+  const cap = mode === "live" ? envCap("LIVE_RUNS_PER_IP_DAY", 4) : envCap("SIMULATED_RUNS_PER_IP_DAY", 15);
+  return takeSlot(windows, key, cap, DAY_MS, now.getTime(), false);
+}
+
+/** Gives back a slot takeIpDaySlot counted (the run was never created). */
+export function refundIpDaySlot(ip: string, mode: "live" | "redteam", now = new Date()) {
+  const [windows, key] = ipDay(mode, ip, now);
+  const w = windows.get(key);
+  if (w && w.count > 0) w.count--;
+}
 
 /** Reserves one concurrent SSE stream for ip. Returns its release fn (idempotent), or null at the cap. */
 export function acquireStream(ip: string): (() => void) | null {
@@ -101,8 +135,8 @@ export function takeLiveSlot(now = new Date()): boolean {
   return true;
 }
 
-/** Counts one simulated run against today's (UTC) cap from SIMULATED_RUNS_PER_DAY (default 200). Simulated runs skip
- *  Gemini but still make real PayPal sandbox calls (the redteam clean-mug retry authorizes an order). */
+/** Counts one simulated run against today's (UTC) cap from SIMULATED_RUNS_PER_DAY (default 200). Simulated runs use a
+ *  scripted agent but still call the Gemini inspector and real PayPal sandbox (the redteam clean-mug retry authorizes an order). */
 export function takeSimulatedSlot(now = new Date()): boolean {
   const s = state();
   const day = now.toISOString().slice(0, 10);

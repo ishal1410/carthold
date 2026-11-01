@@ -21,8 +21,8 @@ const NODES: Record<FlowStep, NodeSpec> = {
   agent: { title: "AI agent", sub: "proposes a purchase", icon: Bot, hue: "info" },
   carthold: { title: "CartHold", sub: "policy + page text", icon: ShieldCheck, hue: "ink" },
   hold: { title: "PayPal hold", sub: "authorized, not taken", icon: CreditCard, hue: "hold" },
-  approve: { title: "Approve", sub: "capture", icon: Check, hue: "paid" },
-  reject: { title: "Reject", sub: "void", icon: Ban, hue: "blocked" },
+  approve: { title: "Release", sub: "capture", icon: Check, hue: "paid" },
+  reject: { title: "Cancel", sub: "void", icon: Ban, hue: "blocked" },
 };
 
 const ORDER: FlowStep[] = ["agent", "carthold", "hold"];
@@ -124,7 +124,7 @@ export function FlowDiagram({ step = null, autoplay = false, interval = 1100, cl
   // Reduced-motion autoplay shows the whole story at rest: held, waiting on a human.
   const current: FlowStep | null = playing ? SCRIPT[tick] : autoplay ? "hold" : step;
   const label =
-    "Flow: the AI agent proposes a purchase, CartHold checks policy and page text, PayPal holds the authorization, then a human approves (capture) or rejects (void).";
+    "Flow: the AI agent proposes a purchase, CartHold checks policy and page text, the buyer approves in PayPal and CartHold authorizes it, so PayPal holds the money, then a human releases it (capture) or cancels it (void).";
 
   return (
     <div className={cx("w-full", className)} role="img" aria-label={label}>

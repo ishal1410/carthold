@@ -37,6 +37,8 @@ export type Run = {
   ended: boolean;
   /** sha256 of the owner capability token (only the creator may decide holds). Never serialized or streamed. */
   ownerHash: Buffer;
+  /** Client IP that created the run (cso L1: caps unsettled runs per address). Never serialized or streamed. */
+  ip?: string;
   /** When the agent run finished (deps.now clock); starts the unresolvable-row TTL. */
   endedAt?: number;
   /** Polls guard.resolveUnknown while the run has "unknown" rows (R2-D). */
@@ -48,6 +50,8 @@ export type RunDeps = {
   runners: Record<RunMode, Runner>;
   guard?: Pick<GuardOptions, "llm" | "paypal" | "holdTimeoutMs">;
   maxRuns?: number;
+  /** Unsettled (running or holding) runs one IP may have at once (default 3). */
+  maxUnsettledPerIp?: number;
   /** How often unknown rows are re-checked with PayPal (default 30s). */
   resolveEveryMs?: number;
   /** Clock for the unresolvable-row TTL (default Date.now). */
@@ -60,6 +64,13 @@ export type RunDeps = {
 export class RunsFullError extends Error {
   constructor() {
     super("server busy: too many active runs, try again shortly");
+  }
+}
+
+/** Thrown by createRun when this IP already has maxUnsettledPerIp runs that are running or holding money (cso L1). */
+export class TooManyActiveRunsError extends Error {
+  constructor() {
+    super("you already have unfinished runs: approve or cancel their holds (or let them expire), then try again");
   }
 }
 
@@ -210,18 +221,20 @@ export function payerUrlsFor(runId: string, origin: string | undefined) {
  * ownerToken is returned exactly once; the run keeps only its sha256.
  * `origin` (e.g. https://carthold.example): where PayPal sends the buyer back after approving a hold.
  */
-export function createRun(input: CreateRunInput, { origin }: { origin?: string } = {}): { run: Run; ownerToken: string } {
+export function createRun(input: CreateRunInput, { origin, ip }: { origin?: string; ip?: string } = {}): { run: Run; ownerToken: string } {
   const d = deps();
+  // cso L1: unsettled runs are unevictable, so without this ~17 addresses could fill the registry for everyone.
+  if (ip !== undefined && [...runs.values()].filter((r: Run) => r.ip === ip && !isSettled(r)).length >= (d.maxUnsettledPerIp ?? 3))
+    throw new TooManyActiveRunsError();
   if (g.__cartholdShuttingDown || (runs.size >= (d.maxRuns ?? MAX_RUNS) && !evictOne())) throw new RunsFullError();
   const mandate: Mandate = { ...DEFAULT_MANDATE, userRequest: input.userRequest };
   const id = crypto.randomUUID();
-  // B1: Simulated runs are scripted, so the inspector stays regex-only (null) unless a test injects an llm.
-  const guard = createGuard({
-    mandate, ...d.guard, llm: d.guard?.llm ?? (input.mode === "redteam" ? null : undefined), payerUrls: payerUrlsFor(id, origin),
-  });
+  // Both modes use the Gemini inspector (llm undefined) when GEMINI_API_KEY is set; inspect() falls back to regex on
+  // error / 429. Simulated runs keep the scripted agent, so they never make Gemini agent calls. Quota: per-IP daily caps.
+  const guard = createGuard({ mandate, ...d.guard, payerUrls: payerUrlsFor(id, origin) });
   const ownerToken = randomBytes(32).toString("base64url");
   const run: Run = {
-    id, mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken),
+    id, mode: input.mode, mandate, guard, messages: [], listeners: new Set(), ended: false, ownerHash: sha256(ownerToken), ip,
   };
   runs.set(run.id, run);
   kickOrphanSweep(d);

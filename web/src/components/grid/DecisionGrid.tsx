@@ -4,7 +4,7 @@ import { AllCommunityModule, ModuleRegistry, type ColDef, type ICellRendererPara
 import { AgGridReact } from "ag-grid-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DecisionRow } from "../../lib/guard/guard";
-import { filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, statusLabel, verdictLabel } from "./format";
+import { csvCell, filterDecisions, formatCountdown, formatShortTime, formatTime, formatUsd, newestFirst, statusLabel, verdictLabel } from "./format";
 import { headline, plainReason } from "../demo/reasons";
 import { gridTheme } from "./theme";
 import { ReceiptInline } from "../demo/Receipt";
@@ -49,11 +49,16 @@ function Countdown({ data }: Cell) {
 }
 
 // Widths sum to fit a 1104px (max-w-6xl) grid without sideways scroll; Expires only shows while a hold is open.
+// Text columns wrap (autoHeight) instead of truncating; every cell keeps its full text in a tooltip.
+const WRAP = { wrapText: true, autoHeight: true, cellClass: "leading-snug py-2 [overflow-wrap:anywhere]" } as const;
 // The run's mode is on the run bar badge, so the grid has no Mode column (same for simulated and live runs).
 const columnDefs: ColDef<DecisionRow>[] = [
-  { field: "time", headerName: "Time", width: 84, valueFormatter: (p) => (p.value ? formatTime(p.value) : ""), cellClass: "figures text-ink-faint" },
-  { field: "merchant", headerName: "Merchant", width: 140, filter: "agTextColumnFilter" },
-  { field: "items", headerName: "Items", flex: 1, minWidth: 120, tooltipField: "items" },
+  {
+    field: "time", headerName: "Time", width: 76, valueFormatter: (p) => (p.value ? formatShortTime(p.value) : ""),
+    tooltipValueGetter: (p) => (p.value ? `${formatTime(p.value)} (${p.value})` : ""), cellClass: "figures text-ink-faint",
+  },
+  { field: "merchant", headerName: "Merchant", width: 120, filter: "agTextColumnFilter", tooltipField: "merchant", ...WRAP },
+  { field: "items", headerName: "Items", flex: 1, minWidth: 120, tooltipField: "items", ...WRAP },
   {
     field: "amountUsd", headerName: "Amount", width: 96, type: "rightAligned",
     valueFormatter: (p) => (p.value == null ? "" : formatUsd(p.value)), cellClass: "figures",
@@ -65,25 +70,27 @@ const columnDefs: ColDef<DecisionRow>[] = [
     valueFormatter: (p) => (p.value ? verdictLabel(p.value) : ""), headerTooltip: "The guard's first decision on this payment",
   },
   {
-    field: "status", headerName: "Outcome", width: 100, filter: "agTextColumnFilter", enableCellChangeFlash: true,
-    valueFormatter: (p) => (p.value ? statusLabel(p.value) : ""),
+    field: "status", headerName: "Outcome", width: 112, filter: "agTextColumnFilter", enableCellChangeFlash: true,
+    valueFormatter: (p) => (p.value ? statusLabel(p.value) : ""), ...WRAP,
     // Filter on the label the user sees ("Paid"), not the raw enum ("captured").
     filterValueGetter: (p) => (p.data ? statusLabel(p.data.status) : ""),
   },
   {
-    // One line per row: a single block lists 7+ reasons, which blew rows up to ~400px. Full list is in the tooltip and the reveal panel.
-    field: "reasons", headerName: "Reasons", flex: 2, minWidth: 140,
+    // The deciding reason only (wrapped): a block lists 7+ reasons, which blew rows up to ~400px. Full list is in the
+    // tooltip, the reveal panel and the CSV.
+    field: "reasons", headerName: "Reasons", flex: 2, minWidth: 160,
     valueFormatter: (p) => {
       const r: string[] = p.value ?? [];
       // Lead with the reason that decided it, never a non-blocking "warning:".
       return r.length > 1 ? `${plainReason(headline(r))} (+${r.length - 1} more)` : r[0] ? plainReason(r[0]) : "";
     },
     tooltipValueGetter: (p) => (p.data?.reasons ?? []).join("\n"),
-    cellClass: "text-ink-muted",
+    ...WRAP,
+    cellClass: `${WRAP.cellClass} text-ink-muted`,
   },
   {
     // Chips wrap onto a second line instead of widening the grid.
-    colId: "paypal", headerName: "PayPal receipt", width: 212, sortable: false, cellRenderer: PayPalIds, autoHeight: true, cellClass: "py-1.5",
+    colId: "paypal", headerName: "PayPal receipt", width: 200, sortable: false, cellRenderer: PayPalIds, autoHeight: true, cellClass: "py-1.5",
     // Only used by CSV export; the cell itself renders PayPalIds.
     valueGetter: (p) => [p.data?.paypalOrderId, p.data?.authorizationId, p.data?.captureId].filter(Boolean).join(" "),
   },
@@ -172,14 +179,14 @@ export function DecisionGrid({ rows, onSelect, height = 420 }: DecisionGridProps
         <input
           type="search"
           aria-label="Search decisions"
-          placeholder="Search merchant, items, reasons…"
+          placeholder="Search decisions"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-9 min-w-0 flex-1 basis-40 rounded-pill border border-line bg-surface-2 px-4 text-sm text-ink placeholder:text-ink-faint focus:border-hold/50 focus:outline-none"
         />
         <button
           type="button"
-          onClick={() => grid.current?.api.exportDataAsCsv({ fileName: "carthold-decisions.csv" })}
+          onClick={() => grid.current?.api.exportDataAsCsv({ fileName: "carthold-decisions.csv", processCellCallback: (p) => csvCell(p.column.getColDef().field, p.value) })}
           className={buttonClasses({ variant: "ghost", size: "sm", className: "hidden sm:inline-flex" })}
         >
           Export CSV

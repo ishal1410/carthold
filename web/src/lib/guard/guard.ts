@@ -130,6 +130,7 @@ function catalogReasons(products: Product[], items: OrderItem[]): string[] {
   return items.flatMap((i) => {
     const p = findProduct(products, i.name);
     if (!p) return [`item "${i.name}" not in merchant catalog`];
+    if (p.available === false) return [`item "${p.name}" is sold out`];
     return p.price === i.unitPriceUsd ? [] : [`"${i.name}" price differs from catalog ($${i.unitPriceUsd} vs $${p.price})`];
   });
 }
@@ -171,6 +172,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
   const rows: DecisionRow[] = [];
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const resolveTries = new Map<string, number>();
+  const nextTry = new Map<string, number>();
   const authorizing = new Map<string, Promise<DecisionRow>>();
   const listeners = new Set<(s: GuardState) => void>();
   const pagesRead = new Set<string>();
@@ -253,6 +255,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
     let triggeringText: string | undefined;
     for (const { slug, insp, hidden, lines } of pages) {
       const merchantPage = slug === store.slug;
+      const page = `the ${getStore(slug)?.name ?? slug} page`;
       // A verified LLM quote of injected (regex-flagged / hidden) text blocks only if the order follows it, like the
       // regex lines. A verified VISIBLE quote was already checked by inspect() to be followed by this order: direct hit.
       const q = insp.llm ? insp.quote : null;
@@ -261,12 +264,14 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
       const hit = (q && !injectedQuote && !onlyAsked(q) ? q : null) || followedSentence(items, products, [...lines, ...quoted], merchantPage);
       // insp.flagged = regex backstop flagged the page or the LLM quote was verified; never an unchecked LLM opinion.
       if (hit) {
-        blocks.push(`inspector: order follows injected text on page ${slug}: "${hit}"`);
+        // Credit Gemini only when the cited sentence is its verified quote (or part of it).
+        const who = q && (q.includes(hit) || hit.includes(q)) ? "Gemini inspector" : "inspector";
+        blocks.push(`${who}: order follows text aimed at AI agents on ${page}: "${hit}"`);
         triggeringText ??= hit;
       } else if (merchantPage && insp.flagged && deviates) {
-        blocks.push(`inspector: merchant page ${slug} has text aimed at AI agents (${insp.reasons.join(", ")}) and the order deviates from the user request`);
+        blocks.push(`inspector: ${page} has text aimed at AI agents (${insp.reasons.join(", ")}) and the order deviates from the user request`);
         triggeringText ??= insp.triggeringText ?? undefined;
-      } else if (merchantPage && insp.flagged) warnings.push(`warning: page ${slug} contains text aimed at AI agents`);
+      } else if (merchantPage && insp.flagged) warnings.push(`warning: ${page} contains text aimed at AI agents`);
       // ponytail: another page warns only if it names this order's item, and that case already blocks above.
     }
     // Inspector "unavailable" notes are informational on a pass; keep them, they explain a regex-only run.
@@ -449,23 +454,44 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
   /** Ask PayPal what really happened to an "unknown" row and move it to captured / voided / held. */
   async function resolveRow(row: DecisionRow) {
     if (row.unresolvable) return;
+    // A decided authorization (approved / rejected / expired / system-voided) is never given up while the process
+    // lives: it would be invisible to the orphan sweep (this row still "knows" its id). After MAX_RESOLVES quick
+    // tries, retries back off (30 s doubling, capped at 10 min). ponytail: in-memory; a restart hands it to the orphan sweep.
+    const decided = !!row.decision && !!row.authorizationId;
+    if (decided && Date.now() < (nextTry.get(row.id) ?? 0)) return;
     await resolveOnce(row);
     // Every attempt counts (no order id, getOrder failing / 404, non-terminal status, void retry failing): after
-    // MAX_RESOLVES the row stays unknown and counted, but is flagged so the session stops polling and can evict it.
+    // MAX_RESOLVES an undecided row stays unknown and counted, but is flagged so the session stops polling and can evict it.
     const n = (resolveTries.get(row.id) ?? 0) + 1;
     resolveTries.set(row.id, n);
-    if (row.status === "unknown" && n >= MAX_RESOLVES)
+    if (row.status !== "unknown" || n < MAX_RESOLVES) return;
+    if (decided) {
+      nextTry.set(row.id, Date.now() + Math.min(30_000 * 2 ** (n - MAX_RESOLVES), 10 * 60_000));
+      if (n === MAX_RESOLVES) update(row, { reasons: [...row.reasons, "void still failing at PayPal; CartHold keeps retrying"] });
+    } else
       update(row, { unresolvable: true, reasons: [...row.reasons, `unresolvable: ${row.paypalOrderId ? "PayPal outcome still unknown" : "no PayPal order id"}, check the PayPal dashboard`] });
   }
 
+  /** Finish the void of a decided authorization (same idempotent request id every time). Failure: stays unknown. */
+  async function retryVoid(row: DecisionRow, authId: string) {
+    try {
+      await paypal.voidAuthorization(authId, rid(row, "void"));
+      if (row.status === "unknown") update(row, { status: "voided", authorizationId: authId, reasons: [...row.reasons, "resolved: void retried, authorization voided"] });
+    } catch (e) {
+      ppError(e, "void retry"); // stays unknown and counted; the next sweep retries
+    }
+  }
+
   async function resolveOnce(row: DecisionRow) {
-    if (!row.paypalOrderId || !paypal.getOrder) return; // create never answered: no id to ask about
+    // Decided with a known authorization but PayPal will not say what happened: voiding is idempotent, just retry it.
+    const blindVoid = () => (row.decision && row.authorizationId ? retryVoid(row, row.authorizationId) : undefined);
+    if (!row.paypalOrderId || !paypal.getOrder) return blindVoid(); // create never answered: no id to ask about
     let o: orders.OrderResult;
     try {
       o = await paypal.getOrder(row.paypalOrderId);
     } catch (e) {
       ppError(e, "getOrder");
-      return;
+      return blindVoid();
     }
     if (o.authorization) return reconcileAuth(row, o.authorization);
     if (row.status !== "unknown" || row.authorizationId || !ORDER_NOT_AUTHORIZED.has(o.status)) return;
@@ -492,12 +518,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
     else if (AUTH_DEAD.has(a.status)) update(row, { status: "voided", authorizationId: a.id, reasons: [...row.reasons, `resolved: authorization ${a.status} at PayPal`] });
     else if (AUTH_OK.has(a.status) && row.decision) {
       // Already decided (rejected / expired / approved but capture failed): finish the void, never re-arm or capture.
-      try {
-        await paypal.voidAuthorization(a.id, rid(row, "void"));
-        if (row.status === "unknown") update(row, { status: "voided", authorizationId: a.id, reasons: [...row.reasons, "resolved: void retried, authorization voided"] });
-      } catch (e) {
-        ppError(e, "void retry"); // stays unknown and counted; the next sweep retries
-      }
+      await retryVoid(row, a.id);
     } else if (AUTH_OK.has(a.status) && !timers.has(row.id)) {
       // Still authorized and nobody decided: back to a normal hold (approve / reject / auto-void).
       update(row, { reasons: [...row.reasons, "resolved: authorization still held at PayPal"] });

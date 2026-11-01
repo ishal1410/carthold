@@ -24,7 +24,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CartHold — a payment-hold firewall for AI shopping agents",
+  title: "CartHold: a payment-hold firewall for AI shopping agents",
   description:
     "Mandate checks, store-page inspection and PayPal authorize-then-capture approval between an AI shopping agent and your money.",
 };

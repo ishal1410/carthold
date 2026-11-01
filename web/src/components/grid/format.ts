@@ -2,6 +2,8 @@ import type { Verdict } from "../../lib/policy/policy";
 
 /** ISO -> local HH:MM:SS. */
 export const formatTime = (iso: string) => new Date(iso).toTimeString().slice(0, 8);
+/** ISO -> local HH:MM (the grid column; the full time is in its tooltip). */
+export const formatShortTime = (iso: string) => formatTime(iso).slice(0, 5);
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 export const formatUsd = (n: number) => usd.format(n);
@@ -56,6 +58,15 @@ export function filterDecisions<T extends { status: string; merchant: string; it
       (status === "all" || r.status === status) &&
       (!q || [r.merchant, r.items, statusLabel(r.status), ...r.reasons].some((v) => v.toLowerCase().includes(q))),
   );
+}
+
+/** One decision-log cell as the CSV exports it: full reasons, raw ISO timestamps, the grid's display words. */
+export function csvCell(field: string | undefined, value: unknown): string {
+  if (value == null) return "";
+  if (field === "reasons" && Array.isArray(value)) return value.join("; ");
+  if (field === "status") return statusLabel(String(value));
+  if (field === "verdict") return verdictLabel(value as Verdict);
+  return String(value);
 }
 
 /** Scorecard "All" order: attacks, then benign, each by id. Copy; input untouched. */

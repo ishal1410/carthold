@@ -179,7 +179,7 @@ export function fixHeldClaim(
 
 // Guard reasons -> a few plain words, most user-relevant first (R4 #7: obeying planted text leads).
 const SHORT_REASONS: [RegExp, string][] = [
-  [/order follows injected text/, "followed hidden page text"],
+  [/order follows text aimed at AI agents/, "followed hidden page text"],
   [/not on allowlist/, "merchant not allowed"],
   [/not traceable|deviates from the user request|not in merchant catalog|source page/, "not what you asked for"],
   [/budget|per-item cap/, "over budget"],

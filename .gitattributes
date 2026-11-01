@@ -3,3 +3,4 @@ docs/build-log/BRIEF.md export-ignore
 docs/build-log/PLAN.md export-ignore
 docs/build-log/NOVELTY.md export-ignore
 docs/submission/** export-ignore
+docs/build-log/FINDINGS*.md export-ignore

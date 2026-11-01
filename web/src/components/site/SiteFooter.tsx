@@ -49,12 +49,12 @@ export function SiteFooter() {
               </Link>
             </li>
             <li>
-              <a href={REPO_HREF} className="text-ink-muted hover:text-ink">
+              <a href={REPO_HREF} target="_blank" rel="noopener noreferrer" className="text-ink-muted hover:text-ink">
                 Source on GitHub
               </a>
             </li>
             <li>
-              <a href={README_HREF} className="text-ink-muted hover:text-ink">
+              <a href={README_HREF} target="_blank" rel="noopener noreferrer" className="text-ink-muted hover:text-ink">
                 How to test (README)
               </a>
             </li>

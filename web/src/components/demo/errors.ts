@@ -36,6 +36,12 @@ export function runSettled(g: GuardState): boolean {
   return g.pendingHolds.length === 0 && !g.rows.some((r) => r.status === "held" || r.status === "pending" || r.status === "awaiting_payer" || (r.status === "unknown" && !dead.has(r.id)));
 }
 
+/** Why "Run agent" is disabled, or null. A new run would leave a live hold with no screen to decide it on (QA3 b). */
+export function runBlockReason(g: GuardState, fixture: boolean): string | null {
+  if (fixture || g.pendingHolds.length === 0) return null;
+  return "Release or cancel the payment waiting on you first.";
+}
+
 /**
  * A5: "Held for you" KPI. heldUsd is the guard's at-risk money (held + unknown); awaitingUsd is holds still waiting on
  * PayPal approval, which the committed bar already draws as hold, so the KPI names it instead of showing "$0 held".

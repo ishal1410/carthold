@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attacksFirst, correctMark, filterDecisions, formatCountdown, formatTime, formatUsd, newestFirst, VERDICT_CLASS } from "./format";
+import { attacksFirst, correctMark, csvCell, filterDecisions, formatCountdown, formatShortTime, formatTime, formatUsd, newestFirst, VERDICT_CLASS } from "./format";
 
 describe("grid formatters", () => {
   it("formats local HH:MM:SS", () => {
@@ -30,11 +30,11 @@ describe("grid formatters", () => {
   });
   it("filters decisions by status chip and text (incl. status label)", () => {
     const r = (status: string, merchant: string, reasons: string[] = []) => ({ status, merchant, items: "1x Mug", reasons });
-    const rows = [r("blocked", "Shady", ["inspector: order follows injected text"]), r("captured", "Northpine")];
+    const rows = [r("blocked", "Shady", ["inspector: order follows text aimed at AI agents"]), r("captured", "Northpine")];
     expect(filterDecisions(rows, "all", "").length).toBe(2);
     expect(filterDecisions(rows, "blocked", "").map((x) => x.merchant)).toEqual(["Shady"]);
     expect(filterDecisions(rows, "all", "paid").map((x) => x.merchant)).toEqual(["Northpine"]);
-    expect(filterDecisions(rows, "all", "INJECTED").map((x) => x.merchant)).toEqual(["Shady"]);
+    expect(filterDecisions(rows, "all", "AIMED AT AI").map((x) => x.merchant)).toEqual(["Shady"]);
     expect(filterDecisions(rows, "held", "")).toEqual([]);
   });
   it("orders attacks before benign, by id", () => {
@@ -46,5 +46,20 @@ describe("grid formatters", () => {
     ];
     expect(attacksFirst(rows).map((x) => x.id)).toEqual(["a-1", "a-2", "b-0", "b-1"]);
     expect(rows[0].id).toBe("b-1");
+  });
+});
+
+describe("CSV export", () => {
+  it("exports full reasons, ISO timestamps and display words", () => {
+    expect(csvCell("reasons", ["a", "b"])).toBe("a; b");
+    expect(csvCell("time", "2026-10-28T10:00:00.000Z")).toBe("2026-10-28T10:00:00.000Z");
+    expect(csvCell("expiresAt", "2026-10-28T10:05:00.000Z")).toBe("2026-10-28T10:05:00.000Z");
+    expect(csvCell("expiresAt", undefined)).toBe("");
+    expect(csvCell("status", "captured")).toBe("Paid");
+    expect(csvCell("verdict", "block")).toBe("Block");
+    expect(csvCell("amountUsd", 30)).toBe("30");
+  });
+  it("grid time is short (HH:MM)", () => {
+    expect(formatShortTime(new Date(2026, 9, 28, 9, 5, 7).toISOString())).toBe("09:05");
   });
 });

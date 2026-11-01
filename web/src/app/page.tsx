@@ -22,7 +22,7 @@ const unseenAttacks = unseen.rows.filter((r) => r.label === "attack").length;
 
 const figures: ProofFigure[] = [
   { value: total("captured"), format: "usd", label: "Paid without asking", note: "One coffee blend, under the $25 ask-me limit.", tone: "paid" },
-  { value: total("held"), format: "usd", label: "Held for approval", note: "A PayPal authorization. Nothing is taken until you tap Approve.", tone: "hold" },
+  { value: total("held"), format: "usd", label: "Held for approval", note: "Approved in PayPal and authorized. Nothing is taken until you tap Release.", tone: "hold" },
   {
     value: total("blocked"),
     format: "usd",
@@ -63,7 +63,7 @@ const steps = [
   {
     icon: Hourglass,
     title: "PayPal holds the money, you decide",
-    body: "Bigger orders become a PayPal authorization. Approve captures it. Reject, or wait five minutes, and the hold is voided.",
+    body: "For a bigger order, you approve it as the buyer in PayPal and CartHold authorizes it, so the money is held, not taken. Release captures it. Cancel voids it. You have 5 minutes to approve in PayPal before the order expires with nothing held, and once it is held, 5 minutes to release it before the hold is voided.",
   },
 ];
 
@@ -110,7 +110,7 @@ export default function Home() {
             <Panel as="figure" coreClassName="px-4 py-8 md:px-10 md:py-12">
               <FlowDiagram autoplay />
               <figcaption className="mt-6 flex flex-col gap-1 border-t border-line pt-4 text-xs text-ink-faint sm:flex-row sm:justify-between">
-                <span>One purchase approved, then one rejected.</span>
+                <span>One purchase released, then one cancelled.</span>
                 <span>The money waits on the PayPal hold in between.</span>
               </figcaption>
             </Panel>

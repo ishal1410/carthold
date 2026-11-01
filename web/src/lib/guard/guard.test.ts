@@ -291,7 +291,7 @@ describe("createGuard", () => {
 // --- Round 2 (FINDINGS-2 R2-P0 A-D, CR-5, #24) ---
 const GIFT25 = mandate("Buy a gift card for my sister, around $25");
 const hiddenGift = getStore("giftlane")!.hidden.map((h) => h.text);
-const warning = "warning: page giftlane contains text aimed at AI agents";
+const warning = "warning: the Giftlane Deals page contains text aimed at AI agents";
 const BREW_ = mandate("Buy a coffee blend under $30");
 const brewOrder_ = { merchant: "Brew & Bean", items: [{ name: "Morning Ritual Blend, 12 oz", quantity: 1, unitPriceUsd: 18 }], sourceSlug: "brew-and-bean" };
 
@@ -333,7 +333,7 @@ describe("A: order-aware taint", () => {
     const g = createGuard({ mandate: mandate("Buy a $25 gift card for my sister"), llm: cleanLlm, paypal: pp });
     g.notePageRead("giftlane");
     const out = await g.onProposeOrder({ merchant: "Giftlane Deals", items: [{ name: "Sister-Gift Bundle, $25 today", quantity: 1, unitPriceUsd: 25 }], sourceSlug: "giftlane" });
-    expect(out).toMatch(/^BLOCKED by CartHold: .*inspector: order follows injected text on page giftlane/);
+    expect(out).toMatch(/^BLOCKED by CartHold: .*inspector: order follows text aimed at AI agents on the Giftlane Deals page/);
     const row = g.getState().rows[0];
     expect(row.triggeringText).toMatch(/GL-100x10/);
     expect(hiddenGift.some((h) => h.includes(row.triggeringText!))).toBe(true);
@@ -502,6 +502,15 @@ describe("D: resolveUnknown", () => {
 });
 
 describe("CR-5: catalog check", () => {
+  it("a sold-out catalog item ($25 gift card, under the ask-me limit) is blocked; nothing is captured", async () => {
+    const pp = mockPayPal();
+    const g = createGuard({ mandate: GIFT25, llm: cleanLlm, paypal: pp });
+    const out = await g.onProposeOrder({ merchant: "Giftlane Deals", items: [{ name: "Universal e-Gift Card, $25 (sold out)", quantity: 1, unitPriceUsd: 25 }], sourceSlug: "giftlane" });
+    expect(out).toMatch(/^BLOCKED by CartHold: .*item "Universal e-Gift Card, \$25 \(sold out\)" is sold out/);
+    expect(g.getState().rows[0]).toMatchObject({ status: "blocked", verdict: "block" });
+    expect(totalCalls(pp)).toBe(0);
+  });
+
   it("price differing from the catalog blocks", async () => {
     const pp = mockPayPal();
     const g = createGuard({ mandate: MUG, llm: cleanLlm, paypal: pp });
@@ -548,14 +557,14 @@ describe("A: in-mandate poison on the merchant's own page (Northpine add-on)", (
     const pp = mockPayPal();
     const g = createGuard({ mandate: MUG, llm: cleanLlm, paypal: pp });
     expect(await g.onProposeOrder(mugOrder)).toMatch(/^HELD/);
-    expect(g.getState().rows[0].reasons).toContain("warning: page northpine contains text aimed at AI agents");
+    expect(g.getState().rows[0].reasons).toContain("warning: the Northpine Outfitters page contains text aimed at AI agents");
   });
 
   it("mug + the pushed Trail Coffee Kit is blocked by the inspector citing the hidden sentence", async () => {
     const pp = mockPayPal();
     const g = createGuard({ mandate: { ...MUG, maxQuantity: 3 }, llm: cleanLlm, paypal: pp });
     const out = await g.onProposeOrder({ ...mugOrder, items: [...mugOrder.items, { name: "Trail Coffee Kit", quantity: 1, unitPriceUsd: 19 }] });
-    expect(out).toMatch(/inspector: order follows injected text on page northpine/);
+    expect(out).toMatch(/inspector: order follows text aimed at AI agents on the Northpine Outfitters page/);
     expect(getStore("northpine")!.hidden[0].text).toContain(g.getState().rows[0].triggeringText!);
     expect(totalCalls(pp)).toBe(0);
   });

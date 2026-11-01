@@ -26,7 +26,7 @@ const CASES = [
 const styleLabel: Record<HiddenSegment["style"], string> = {
   "visually-hidden": "visually hidden",
   "white-on-white": "white on white",
-  "aria-label": "image alt text",
+  "aria-label": "image label",
 };
 
 function Hidden({ segs }: { segs: HiddenSegment[] }) {
@@ -105,7 +105,7 @@ export function InjectionReveal() {
   const base = useId();
   const c = CASES[active];
   const store = getStore(c.slug);
-  const row = run.rows.find((r) => r.triggeringText && r.reasons.some((x) => x.includes(`page ${c.slug}`)));
+  const row = run.rows.find((r) => r.triggeringText && r.reasons.some((x) => x.includes(`the ${store?.name} page`)));
   if (!store) return null;
 
   return (

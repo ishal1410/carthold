@@ -31,7 +31,7 @@ function useNow(active: boolean) {
 
 /** One reason, labelled by who raised it. Used in disclosures and the reveal dialog. */
 export function ReasonLine({ r }: { r: string }) {
-  const who = isWarning(r) ? "Warning, did not block" : /^inspector\b/i.test(r) ? "Inspector" : "Policy";
+  const who = isWarning(r) ? "Warning, did not block" : /^gemini inspector\b/i.test(r) ? "Gemini inspector" : /^inspector\b/i.test(r) ? "Inspector" : "Policy";
   return (
     <li className="flex gap-2.5 [overflow-wrap:anywhere]">
       <span
@@ -40,7 +40,7 @@ export function ReasonLine({ r }: { r: string }) {
       />
       <span>
         <span className={cx("font-medium", isWarning(r) ? "text-warning" : isInspectorBlock(r) ? "text-blocked" : "text-ink-muted")}>{who}: </span>
-        <span className="text-ink-muted">{stripWarning(r).replace(/^inspector:?\s*/i, "")}</span>
+        <span className="text-ink-muted">{stripWarning(r).replace(/^(gemini )?inspector:?\s*/i, "")}</span>
       </span>
     </li>
   );
@@ -259,6 +259,9 @@ export function gist(row: DecisionRow, viewOnly = false): string {
   const who = viewOnly ? "the run's owner" : "you";
   if (row.status === "blocked") return hasInjection(row) ? "followed hidden text" : (reasonTags(row.reasons)[0] ?? plainReason(headline(row.reasons)));
   if (row.status === "cancelled") return `cancelled by ${who}`;
+  // Checked before "expired" / "auto-voided": a shutdown sweep is not a timeout.
+  if (row.decision === "system-voided" && row.status === "voided") return "voided: server restarted";
+  if (row.decision === "system-voided" && row.status === "expired") return "expired: server restarted";
   if (row.status === "expired") return "PayPal approval timed out";
   if (row.reasons.includes("rejected by user")) return `rejected by ${who}`;
   if (row.reasons.some((r) => /^auto-voided/.test(r))) return "timed out";

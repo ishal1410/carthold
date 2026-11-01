@@ -15,14 +15,14 @@ function isActive(pathname: string, href: string) {
 }
 
 export interface SiteNavProps {
-  /** "compact" drops the CTA, for pages that carry their own primary action (the demo dashboard). */
+  /** "compact" drops the CTA. Not used by default: the recorded-run button shows on every page, /demo included. */
   variant?: "default" | "compact";
 }
 
-/** Floating glass nav. Rendered once in the root layout; /demo routes get the compact variant automatically. */
+/** Floating glass nav. Rendered once in the root layout. */
 export function SiteNav({ variant }: SiteNavProps) {
   const pathname = usePathname() ?? "/";
-  const compact = variant ? variant === "compact" : pathname.startsWith("/demo");
+  const compact = variant === "compact";
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -75,6 +75,8 @@ export function SiteNav({ variant }: SiteNavProps) {
           <li>
             <a
               href={REPO_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
               className="rounded-pill px-3 py-1.5 text-sm text-ink-muted transition-colors duration-[var(--duration-fast)] ease-snap hover:text-ink"
             >
               Source on GitHub
@@ -144,6 +146,8 @@ export function SiteNav({ variant }: SiteNavProps) {
           >
             <a
               href={REPO_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
               onClick={() => setOpen(false)}
               className="flex h-12 items-center rounded-[var(--radius-md)] px-4 font-display text-lg text-ink-muted"
             >

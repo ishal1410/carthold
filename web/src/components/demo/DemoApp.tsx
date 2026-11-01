@@ -10,7 +10,7 @@ import type { Mandate } from "@/lib/policy/policy";
 import { DecisionGrid } from "@/components/grid";
 import { RECORDED_RUN_HREF } from "@/components/site";
 import { AnimatedNumber, Badge, Button, Panel, StatusPill, buttonClasses, cx } from "@/components/ui";
-import { actionError, heldKpi, runSettled, runStartError } from "./errors";
+import { actionError, heldKpi, runBlockReason, runSettled, runStartError } from "./errors";
 import { FIXTURE_REQUEST, fixtureEvents, fixturePages, fixtureState, settleFixtureHold } from "./fixtures";
 import { markParts } from "./highlight";
 import { hasInjection, orderReasons, plainReason, reasonTags } from "./reasons";
@@ -90,8 +90,11 @@ function Demo({ fixture }: { fixture: boolean }) {
   /** Row whose PayPal popup closed with no approval (QA2 #1): its hold card shows the judge hint as a notice. */
   const [nudged, setNudged] = useState<string | null>(null);
   const guardRef = useRef(guard);
+  /** The run on screen. A decision response for any other run is stale and must not touch this dashboard (QA3 d). */
+  const runIdRef = useRef(runId);
   useEffect(() => {
     guardRef.current = guard;
+    runIdRef.current = runId;
   });
   const esRef = useRef<EventSource | null>(null);
   // Synchronous guards: a state-based `disabled` only lands after a re-render, so same-tick double clicks got through (#13, #17).
@@ -152,9 +155,13 @@ function Demo({ fixture }: { fixture: boolean }) {
   }, [fixture, guard.rows]);
 
   async function run() {
-    if (startingRef.current) return;
+    if (startingRef.current || runBlockReason(guardRef.current, fixture)) return;
     startingRef.current = true;
     esRef.current?.close();
+    runIdRef.current = null; // in-flight decisions for the old run are ignored from here on
+    decidingRef.current.clear();
+    setBusy({});
+    setNudged(null);
     setError(null);
     setEvents([]);
     setGuard(EMPTY);
@@ -244,6 +251,7 @@ function Demo({ fixture }: { fixture: boolean }) {
   async function payerReturned(m: PayerReturn) {
     if (m.cancelled) return setNudged(m.row);
     if (!ownerToken || decidingRef.current.has(m.row)) return;
+    const forRun = runId;
     decidingRef.current.add(m.row);
     setBusy((b) => ({ ...b, [m.row]: true }));
     try {
@@ -253,12 +261,13 @@ function Demo({ fixture }: { fixture: boolean }) {
         body: JSON.stringify({ action: "payer-approved", orderId: m.orderId }),
       });
       const body = (await res.json().catch(() => ({}))) as { state?: GuardState; error?: string };
+      if (runIdRef.current !== forRun) return;
       // 409 "no pending hold": already authorized (a second delivery) or expired; the stream has the real outcome.
       if (res.status === 409 && body.error?.startsWith("no pending hold")) return;
       if (!res.ok || !body.state) return setError(`PayPal approval failed: ${actionError(res.status, body.error)}`);
       setGuard(body.state);
     } catch {
-      setError(`PayPal approval failed: ${actionError()}`);
+      if (runIdRef.current === forRun) setError(`PayPal approval failed: ${actionError()}`);
     } finally {
       decidingRef.current.delete(m.row);
       setBusy((b) => ({ ...b, [m.row]: false }));
@@ -302,6 +311,7 @@ function Demo({ fixture }: { fixture: boolean }) {
   const decide: Decide = async (row, action) => {
     if (action === "paypal") return openPayPal(row);
     if (decidingRef.current.has(row.id)) return;
+    const forRun = runId;
     decidingRef.current.add(row.id);
     setBusy((b) => ({ ...b, [row.id]: true }));
     try {
@@ -321,15 +331,15 @@ function Demo({ fixture }: { fixture: boolean }) {
         body: JSON.stringify({ action }),
       });
       // 409 = hold already settled (auto-void, another tab, an earlier click). Not an error:
-      // the open stream carries the real outcome.
-      if (res.status === 409) return;
+      // the open stream carries the real outcome. A response for a run no longer on screen is dropped.
+      if (res.status === 409 || runIdRef.current !== forRun) return;
       const verb = action === "approve" ? "Release" : "Cancel";
       if (res.status === 429) return setError(`${verb} failed: too many clicks right now. Wait a minute and try again.`);
       const body = (await res.json().catch(() => ({}))) as { state?: GuardState; error?: string };
       if (!res.ok || !body.state) return setError(`${verb} failed: ${actionError(res.status, body.error)}`);
       setGuard(body.state);
     } catch {
-      setError(`${action === "approve" ? "Release" : "Cancel"} failed: ${actionError()}`);
+      if (runIdRef.current === forRun) setError(`${action === "approve" ? "Release" : "Cancel"} failed: ${actionError()}`);
     } finally {
       decidingRef.current.delete(row.id);
       setBusy((b) => ({ ...b, [row.id]: false }));
@@ -366,6 +376,7 @@ function Demo({ fixture }: { fixture: boolean }) {
       mode={mode}
       setMode={setMode}
       running={running}
+      blocked={runBlockReason(guard, fixture)}
       onRun={run}
       fixture={fixture}
       error={hasRun ? null : error}
@@ -438,7 +449,7 @@ function RunBar(p: {
     { id: "log", label: "Log" },
   ];
   return (
-    <div className="z-20 mt-3 border-y lg:sticky lg:top-[4.25rem] border-line bg-canvas/95 backdrop-blur-xl">
+    <div className="z-20 mt-3 border-y lg:sticky lg:top-[4.25rem] border-line bg-canvas">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 md:px-6">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {p.fixture ? (
@@ -596,6 +607,8 @@ function Composer(p: {
   mode: Mode;
   setMode: (m: Mode) => void;
   running: boolean;
+  /** Why a new run is not allowed right now (a live hold is waiting), or null. */
+  blocked: string | null;
   onRun: () => void;
   fixture: boolean;
   error: string | null;
@@ -642,15 +655,30 @@ function Composer(p: {
     </fieldset>
   );
   const submit = (
-    <Button type="submit" size={p.compact ? "md" : "lg"} disabled={p.running || !p.request.trim()} loading={p.running} icon={!p.running && <Play strokeWidth={1.75} />} className="w-full">
-      {p.running ? "Agent is shopping" : p.fixture ? "Replay recording" : "Run agent"}
-    </Button>
+    <div title={p.blocked ?? undefined}>
+      <Button
+        type="submit"
+        size={p.compact ? "md" : "lg"}
+        disabled={p.running || !p.request.trim() || !!p.blocked}
+        aria-describedby={p.blocked ? "run-blocked" : undefined}
+        loading={p.running}
+        icon={!p.running && <Play strokeWidth={1.75} />}
+        className="w-full"
+      >
+        {p.running ? "Agent is shopping" : p.fixture ? "Reset recording" : "Run agent"}
+      </Button>
+      {p.blocked && (
+        <p id="run-blocked" className="mt-1.5 text-xs text-hold">
+          {p.blocked}
+        </p>
+      )}
+    </div>
   );
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (!p.running && p.request.trim()) p.onRun();
+        if (!p.running && !p.blocked && p.request.trim()) p.onRun();
       }}
     >
       <div className={p.compact ? "sr-only" : "flex items-center justify-between gap-3"}>

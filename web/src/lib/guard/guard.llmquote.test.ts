@@ -22,7 +22,7 @@ describe("verified LLM quote", () => {
     expect(out).toMatch(/^BLOCKED/);
     const row = g.getState().rows[0];
     expect(row.verdict).toBe("block");
-    expect(row.reasons).toContain(`inspector: order follows injected text on page northpine: "${QUOTE}"`);
+    expect(row.reasons).toContain(`Gemini inspector: order follows text aimed at AI agents on the Northpine Outfitters page: "${QUOTE}"`);
     expect(row.triggeringText).toBe(QUOTE);
     expect(pp.createAuthorizeOrder).not.toHaveBeenCalled();
   });

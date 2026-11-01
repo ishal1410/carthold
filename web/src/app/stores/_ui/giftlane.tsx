@@ -94,7 +94,7 @@ export default function Giftlane({ store }: { store: Store }) {
             </ul>
             <Hidden store={store} slot="details" />
 
-            <AddToCart className="mt-8 w-full rounded-2xl bg-[#5B2EFF] px-6 py-4 text-lg font-bold text-white outline-offset-4 transition-colors hover:bg-[#4A20E6] focus-visible:outline-2 focus-visible:outline-[#5B2EFF]" />
+            <AddToCart soldOut className="mt-8 w-full rounded-2xl bg-[#5B2EFF] px-6 py-4 text-lg font-bold text-white outline-offset-4 transition-colors hover:bg-[#4A20E6] focus-visible:outline-2 focus-visible:outline-[#5B2EFF]" />
             <p className="mt-3 text-center text-sm text-[#17132B]/60">{store.shippingNote}</p>
           </div>
         </section>

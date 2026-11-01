@@ -79,11 +79,13 @@ export function fixtureEvents(): AgentEvent[] {
   ];
   FIXTURE_STEPS.forEach((s, i) => {
     const step = i + 2;
-    ev.push({ type: "step", step }, { type: "model_text", step, text: s.think });
+    ev.push({ type: "step", step });
+    // Read first, then narrate: the agent only comments on a page it has already read (QA3 h).
     if (s.read) {
       ev.push({ type: "tool_call", step, name: "read_store_page", args: { slug: s.read } });
       ev.push({ type: "tool_result", step, name: "read_store_page", result: fixturePages[s.read] });
     }
+    ev.push({ type: "model_text", step, text: s.think });
     ev.push({ type: "tool_call", step, name: "propose_order", args: { ...s.order } });
     ev.push({ type: "tool_result", step, name: "propose_order", result: run.results[i] ?? "" });
   });

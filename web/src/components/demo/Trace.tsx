@@ -34,7 +34,9 @@ export function holdUpdates(rows: DecisionRow[], viewOnly = false): string[] {
   for (const r of rows) {
     if (r.verdict !== "hold") continue;
     const what = `the ${usd(r.amountUsd)} hold at ${r.merchant}`;
-    if (r.status === "cancelled") out.push(`${who} cancelled ${what} before PayPal approval. Nothing was authorized or charged.`);
+    if (r.decision === "system-voided" && (r.status === "voided" || r.status === "expired"))
+      out.push(`${cap(what)} was ${r.status} when the server restarted. Nothing was charged.`);
+    else if (r.status === "cancelled") out.push(`${who} cancelled ${what} before PayPal approval. Nothing was authorized or charged.`);
     else if (r.status === "expired") out.push(`${cap(what)}: PayPal approval timed out. Nothing was authorized or charged.`);
     else if (r.reasons.includes("rejected by user")) out.push(`${who} rejected ${what}. Authorization voided, nothing was charged.`);
     else if (r.reasons.some((x) => /^auto-voided/.test(x))) out.push(`${what.charAt(0).toUpperCase()}${what.slice(1)} timed out. Authorization voided, nothing was charged.`);
@@ -224,7 +226,8 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
               tone={done.reason === "error" ? "warning" : "neutral"}
               title={done.reason === "error" ? "Agent stopped" : done.reason === "max_steps" ? "Agent hit its step limit" : "Agent finished"}
             >
-              {done.reason === "error" ? done.error : done.reason === "final_answer" ? done.text : null}
+              {done.reason === "error" ? done.error : done.text}
+              {updates.length > 0 && <span className="mt-3 block text-2xs font-medium text-ink-faint">Since then</span>}
               {updates.map((u) => (
                 <span key={u} className="mt-2 block rounded-sm border border-line bg-surface-2 px-3 py-2 text-ink">
                   {u}

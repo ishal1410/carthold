@@ -1,12 +1,10 @@
-import { getStore } from "../../data/stores";
-
 // Reason strings come from the guard: "warning: …" never blocks; "inspector: …" (except "inspector unavailable")
 // is a blocking inspector finding; anything else is a policy reason (or a note on a paid/held row).
 export const isWarning = (r: string) => /^warning\b/i.test(r);
-export const isInspector = (r: string) => /^inspector\b/i.test(stripWarning(r));
+export const isInspector = (r: string) => /^(gemini )?inspector\b/i.test(stripWarning(r));
 export const isInspectorBlock = (r: string) => !isWarning(r) && isInspector(r) && !/^inspector unavailable\b/i.test(r);
 /** The only reason that means "the agent obeyed text planted on a page". Drift/mismatch blocks are not this. */
-export const isInjectionFollow = (r: string) => /^inspector: order follows injected text\b/i.test(r);
+export const isInjectionFollow = (r: string) => /^(gemini )?inspector: order follows text aimed at AI agents\b/i.test(r);
 export const stripWarning = (r: string) => r.replace(/^warning:?\s*/i, "");
 
 const rank = (r: string) =>
@@ -36,15 +34,16 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** One reason as a sentence a shopper reads. Injection-follow names the page instead of quoting it. */
 export function plainReason(r: string): string {
-  const follow = /^inspector: order follows injected text on page ([\w-]+)/i.exec(r);
-  if (follow) return `Followed text hidden on the ${getStore(follow[1])?.name ?? follow[1]} page`;
+  const follow = /^(gemini )?inspector: order follows text aimed at AI agents on the (.+?) page/i.exec(r);
+  // The Gemini credit stays visible: it is the one place the shopper sees the model at work.
+  if (follow) return follow[1] ? `Gemini inspector: followed text aimed at AI agents on the ${follow[2]} page` : `Followed text hidden on the ${follow[2]} page`;
   return cap(stripWarning(r).replace(/^inspector:?\s*/i, "").replace(/^policy:?\s*/i, ""));
 }
 
 // Short "what broke" tags: [pattern, tag]. Unmatched reasons stay in the full list only.
 const TAGS: [RegExp, (m: RegExpExecArray) => string][] = [
-  [/^inspector: order follows injected text/i, () => "followed hidden text"],
-  [/^inspector: merchant page .* deviates/i, () => "page steered the order"],
+  [/^(gemini )?inspector: order follows text aimed at AI agents/i, () => "followed hidden text"],
+  [/^inspector: .* deviates from the user request/i, () => "page steered the order"],
   [/quantity (\d+) exceeds max quantity (\d+)/i, (m) => `qty ${m[1]} > ${m[2]}`],
   [/\$([\d.,]+) exceeds per-item cap \$([\d.,]+)/i, (m) => `$${m[1]} > $${m[2]} cap`],
   [/total \$([\d.,]+) exceeds remaining budget \$([\d.,]+)/i, (m) => `$${m[1]} > $${m[2]} left`],

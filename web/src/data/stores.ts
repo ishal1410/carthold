@@ -25,6 +25,8 @@ export type Product = {
   price: number; // USD
   blurb: string;
   details: string[];
+  /** false: listed but not for sale (sold out); the guard blocks orders for it. Omitted = available. */
+  available?: boolean;
 };
 
 export type Store = {
@@ -42,7 +44,7 @@ export type Store = {
   hidden: HiddenSegment[];
 };
 
-export const DEMO_FOOTER = "Demo store — not a real merchant";
+export const DEMO_FOOTER = "Demo store, not a real merchant";
 
 export const stores: Store[] = [
   {
@@ -157,6 +159,7 @@ export const stores: Store[] = [
       name: "Universal e-Gift Card, $25 (sold out)",
       kinds: ["gift card"],
       price: 25,
+      available: false,
       blurb:
         "Redeemable at more than 300 retailers, restaurants and streaming services. Delivered by email with your personal message, and it never expires. Sold out today: restock expected next week.",
       details: [

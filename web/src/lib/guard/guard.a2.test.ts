@@ -29,7 +29,7 @@ describe("visible LLM quote vs user-traceable items", () => {
     const g = createGuard({ mandate: mandate("Buy me coffee beans under $30"), llm: async () => "{}", paypal: pp() });
     const out = await g.onProposeOrder({ merchant: "Brew & Bean", items: [{ name: "Morning Ritual Blend, 12 oz", quantity: 1, unitPriceUsd: 18 }], sourceSlug: "brew-and-bean" });
     const row = g.getState().rows[0];
-    expect(row.reasons.some((r) => r.includes("order follows injected text"))).toBe(false);
+    expect(row.reasons.some((r) => r.includes("order follows text aimed at AI agents"))).toBe(false);
     expect(out).toMatch(/^Paid/);
   });
 
@@ -42,7 +42,7 @@ describe("visible LLM quote vs user-traceable items", () => {
       sourceSlug: "northpine",
     });
     expect(out).toMatch(/^BLOCKED/);
-    expect(g.getState().rows[0].reasons).toContain(`inspector: order follows injected text on page northpine: "${h.quote}"`);
+    expect(g.getState().rows[0].reasons).toContain(`Gemini inspector: order follows text aimed at AI agents on the Northpine Outfitters page: "${h.quote}"`);
   });
 
   it("still blocks a quote that names no item at all", async () => {

@@ -42,7 +42,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string;
     await (b.action === "payer-approved" ? run.guard.payerApproved(rowId, b.orderId) : b.action === "approve" ? run.guard.approve(rowId) : run.guard.reject(rowId));
   } catch (e) {
     const msg = (e as Error).message;
-    if (msg.startsWith("no pending hold") || msg.startsWith("not approved in PayPal yet")) return fail(409, msg);
+    if (/^(no pending hold|not approved in PayPal yet|approval window expired)/.test(msg)) return fail(409, msg);
     if (msg.startsWith("order id does not match")) return fail(400, msg);
     throw e;
   }

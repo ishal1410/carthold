@@ -25,10 +25,14 @@ services:
         value: true-client-ip
       - key: TRUSTED_PROXY_HOPS # fallback only, when CLIENT_IP_HEADER is absent
         value: "1"
-      - key: LIVE_RUNS_PER_DAY # global daily cap on Live runs (each one drives the Gemini agent, plus PayPal sandbox calls)
-        value: "60"
-      - key: SIMULATED_RUNS_PER_DAY # global daily cap on Simulated runs (no Gemini, but real PayPal sandbox authorize/void calls)
-        value: "200"
+      - key: LIVE_RUNS_PER_DAY # global daily cap on Live runs (each one drives the Gemini agent + inspector, plus PayPal sandbox calls)
+        value: "150"
+      - key: SIMULATED_RUNS_PER_DAY # global daily cap on Simulated runs (scripted agent; Gemini inspector + real PayPal sandbox calls)
+        value: "500"
+      - key: LIVE_RUNS_PER_IP_DAY # per-address daily cap on Live runs, checked before the global cap so one address cannot lock everyone out
+        value: "4"
+      - key: SIMULATED_RUNS_PER_IP_DAY # per-address daily cap on Simulated runs
+        value: "15"
       - key: NEXT_MANUAL_SIG_HANDLE # next start skips its own SIGTERM exit, so session.ts can void held PayPal authorizations first (next/dist/server/lib/start-server.js)
         value: "1"
       - key: PAYPAL_HOLD_PAYER # held orders: "paypal" = the buyer approves each one in PayPal (default); "card" = instant fallback to the sandbox test card if sandbox buyer approval breaks

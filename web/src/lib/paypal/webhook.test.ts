@@ -146,14 +146,22 @@ describe("handleWebhook", () => {
     expect((await handleWebhook(req(JSON.stringify(voided()), { ...HEADERS, "paypal-cert-url": "https://api.paypal.com/v1/notifications/certs/C" }), vi.fn())).status).toBe(200);
   });
 
-  it("m1: per-IP limit (60/min) answers 429 before any PayPal call", async () => {
+  it("m1/L2: per-IP limit (20/min) answers 429 before any PayPal call", async () => {
     const bodies = paypalStub("FAILURE");
     const apply = vi.fn();
     const from = (ip: string) => req(JSON.stringify(voided()), { ...HEADERS, "x-forwarded-for": ip });
-    for (let i = 0; i < 60; i++) expect((await handleWebhook(from("9.9.9.9"), apply)).status).toBe(401);
+    for (let i = 0; i < 20; i++) expect((await handleWebhook(from("9.9.9.9"), apply)).status).toBe(401);
     expect((await handleWebhook(from("9.9.9.9"), apply)).status).toBe(429);
-    expect(bodies).toHaveLength(60);
+    expect(bodies).toHaveLength(20);
     expect((await handleWebhook(from("8.8.8.8"), apply)).status).toBe(401); // other address unaffected
+  });
+
+  it("L2: global cap (120/min across all addresses) answers 429 before any PayPal call", async () => {
+    const bodies = paypalStub("FAILURE");
+    const from = (ip: string) => req(JSON.stringify(voided()), { ...HEADERS, "x-forwarded-for": ip });
+    for (let ip = 0; ip < 6; ip++) for (let i = 0; i < 20; i++) expect((await handleWebhook(from(`7.7.7.${ip}`), vi.fn())).status).toBe(401);
+    expect((await handleWebhook(from("6.6.6.6"), vi.fn())).status).toBe(429);
+    expect(bodies).toHaveLength(120);
   });
 
   it("m2: paypal-transmission-time older than 3 days or unparseable -> 400, never verified", async () => {

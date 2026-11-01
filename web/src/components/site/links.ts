@@ -16,4 +16,4 @@ export const isStorePage = (pathname: string) =>
 
 // Text links only, no GitHub logo.
 export const REPO_HREF = "https://github.com/ishal1410/carthold";
-export const README_HREF = `${REPO_HREF}#readme`;
+export const README_HREF = `${REPO_HREF}#how-to-test`;

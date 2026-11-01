@@ -39,6 +39,7 @@ const holdRunner: Runner = async ({ onProposeOrder, onEvent = () => {} }) => {
 let pp: PayPalApi;
 beforeEach(() => {
   resetLimits();
+  resetRuns(); // unsettled runs count per IP (cso L1): a test's leftover holds must not block the next test's runs
   pp = paypal();
   setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp } });
 });
@@ -130,12 +131,100 @@ describe("POST /api/runs", () => {
   });
 
   it("429 after 6 runs per IP per window; other IPs unaffected", async () => {
+    vi.stubEnv("LIVE_RUNS_PER_IP_DAY", "50");
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp }, maxUnsettledPerIp: 50 });
     const ip = { "x-forwarded-for": "10.0.0.1, 1.2.3.4" };
     for (let i = 0; i < 6; i++) expect((await createRunRoute(post(MUG, ip))).status).toBe(201);
     const res = await createRunRoute(post(MUG, ip));
     expect(res.status).toBe(429);
     expect((await res.json()).error).toMatch(/too many runs/);
     expect((await createRunRoute(post(MUG, { "x-forwarded-for": "5.6.7.8" }))).status).toBe(201);
+    vi.unstubAllEnvs();
+  });
+
+  it("H1: 429 after LIVE_RUNS_PER_IP_DAY live runs from one IP, pointing to the recorded run; other IPs unaffected", async () => {
+    vi.stubEnv("LIVE_RUNS_PER_IP_DAY", "2");
+    try {
+      const a = { "x-forwarded-for": "h1" };
+      for (let i = 0; i < 2; i++) expect((await createRunRoute(post(MUG, a))).status).toBe(201);
+      const res = await createRunRoute(post(MUG, a));
+      expect(res.status).toBe(429);
+      const msg = (await res.json()).error;
+      expect(msg).toMatch(/no live runs left from this address today/);
+      expect(msg).toContain("/demo?fixture=1");
+      expect((await createRunRoute(post(MUG, { "x-forwarded-for": "h2" }))).status).toBe(201);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("H1: 429 after SIMULATED_RUNS_PER_IP_DAY simulated runs from one IP; other IPs unaffected", async () => {
+    vi.stubEnv("SIMULATED_RUNS_PER_IP_DAY", "2");
+    try {
+      const RT = { ...MUG, mode: "redteam" };
+      const a = { "x-forwarded-for": "h3" };
+      for (let i = 0; i < 2; i++) expect((await createRunRoute(post(RT, a))).status).toBe(201);
+      const res = await createRunRoute(post(RT, a));
+      expect(res.status).toBe(429);
+      const msg = (await res.json()).error;
+      expect(msg).toMatch(/no simulated runs left from this address today/);
+      expect(msg).toContain("/demo?fixture=1");
+      expect((await createRunRoute(post(RT, { "x-forwarded-for": "h4" }))).status).toBe(201);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("H1: per-IP caps run before the global cap, so one IP's refused requests never use global slots", async () => {
+    vi.stubEnv("LIVE_RUNS_PER_DAY", "3");
+    vi.stubEnv("LIVE_RUNS_PER_IP_DAY", "1");
+    try {
+      const from = (ip: string) => createRunRoute(post(MUG, { "x-forwarded-for": ip }));
+      expect((await from("g1")).status).toBe(201);
+      for (let i = 0; i < 4; i++) expect((await from("g1")).status).toBe(429);
+      expect((await from("g2")).status).toBe(201);
+      expect((await from("g3")).status).toBe(201);
+      const res = await from("g4");
+      expect(res.status).toBe(429);
+      expect((await res.json()).error).toMatch(/daily live run limit/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("H1: per-IP daily defaults are 4 live / 15 simulated and reset on the next UTC day", async () => {
+    const { takeIpDaySlot } = await import("./limits");
+    const d1 = new Date("2026-10-31T10:00:00Z");
+    for (let i = 0; i < 4; i++) expect(takeIpDaySlot("ip", "live", d1)).toBe(true);
+    expect(takeIpDaySlot("ip", "live", d1)).toBe(false);
+    for (let i = 0; i < 15; i++) expect(takeIpDaySlot("ip", "redteam", d1)).toBe(true);
+    expect(takeIpDaySlot("ip", "redteam", d1)).toBe(false);
+    expect(takeIpDaySlot("other", "live", d1)).toBe(true);
+    expect(takeIpDaySlot("ip", "live", new Date("2026-11-01T00:00:01Z"))).toBe(true);
+  });
+
+  it("L1: 429 once an IP has 3 unsettled runs (running or holding); other IPs fine; settling one frees a slot", async () => {
+    const a = { "x-forwarded-for": "u1" };
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await createRunRoute(post(MUG, a));
+      expect(res.status).toBe(201);
+      const { runId, ownerToken } = await res.json();
+      tokens.set(runId, ownerToken);
+      ids.push(runId);
+    }
+    const res = await createRunRoute(post(MUG, a));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatch(/unfinished runs/);
+    expect((await createRunRoute(post(MUG, { "x-forwarded-for": "u2" }))).status).toBe(201);
+    const rowId = holdId(await waitEnd(ids[0]));
+    const rej = await holdRoute(
+      new Request("http://x", { method: "POST", headers: { "content-type": "application/json", ...auth(ids[0]) }, body: JSON.stringify({ action: "reject" }) }),
+      params({ runId: ids[0], rowId }),
+    );
+    expect(rej.status).toBe(200);
+    // The refused request was refunded, so this is the IP's 4th counted live run of the day (default cap 4).
+    expect((await createRunRoute(post(MUG, a))).status).toBe(201);
   });
 
   it("429 once LIVE_RUNS_PER_DAY live runs are used; redteam runs still allowed", async () => {
@@ -397,7 +486,9 @@ describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
     const runId = await startRun();
     const msgs = await waitEnd(runId);
     const row = lastState(msgs).rows[0];
-    expect(row).toMatchObject({ status: "awaiting_payer", paypalOrderId: "O1" });
+    expect(row).toMatchObject({ status: "awaiting_payer" });
+    expect(row.paypalOrderId).toBeUndefined(); // cso M1: viewers never get an awaiting order id
+    expect(getRun(runId)!.guard.getState().rows[0].paypalOrderId).toBe("O1");
     const payer = (vi.mocked(pp.createAuthorizeOrder).mock.calls[0][2] as { payer: { returnUrl: string; cancelUrl: string } }).payer;
     expect(payer.returnUrl).toBe(`https://carthold.example/demo/paypal-return?run=${runId}&row=${row.id}`);
     expect(payer.cancelUrl).toBe(`https://carthold.example/demo/paypal-return?run=${runId}&row=${row.id}&cancelled=1`);
@@ -410,6 +501,44 @@ describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
     expect(getRun(runId)!.guard.getState().rows[0].payerActionUrl).toBe(PAYER_URL);
     expect(JSON.stringify(msgs)).not.toContain("payerActionUrl");
     expect(JSON.stringify(msgs)).not.toContain("checkoutnow");
+  });
+
+  it("M1: the SSE stream never carries an awaiting row's PayPal order id (rows or agent text); it appears once authorized", async () => {
+    const runId = await startRun();
+    const msgs = await waitEnd(runId);
+    const row = getRun(runId)!.guard.getState().rows[0];
+    expect(row).toMatchObject({ status: "awaiting_payer", paypalOrderId: "O1" });
+    expect(JSON.stringify(msgs)).not.toContain("O1");
+    expect(lastState(msgs).rows[0].paypalOrderId).toBeUndefined();
+    expect((await act(runId, row.id, { action: "payer-approved", orderId: "O1" })).status).toBe(200);
+    const after = lastState(await readStream(runId, (ms) => ms.some((m) => m.kind === "guard" && m.state.rows[0]?.status === "held")));
+    expect(after.rows[0]).toMatchObject({ status: "held", paypalOrderId: "O1", authorizationId: "A1" });
+  });
+
+  it("M1: the SSE stream sends only allowlisted row fields", async () => {
+    const runId = await startRun();
+    const msgs = await waitEnd(runId);
+    const allowed = ["id", "time", "merchant", "items", "amountUsd", "verdict", "reasons", "triggeringText", "paypalOrderId", "authorizationId", "captureId", "status", "expiresAt", "decision", "unresolvable"];
+    const g = getRun(runId)!.guard;
+    const real = g.getState();
+    // A field added to DecisionRow later must not reach viewers by default.
+    vi.spyOn(g, "getState").mockReturnValue({ ...real, rows: real.rows.map((x) => ({ ...x, secretField: "leak-me" })) });
+    const replayed = getRun(runId)!.messages.length; // history first, then the current-state frame from getState
+    const again = await readStream(runId, (ms) => ms.length > replayed);
+    for (const m of [...msgs, ...again]) if (m.kind === "guard") for (const row of m.state.rows) for (const k of Object.keys(row)) expect(allowed).toContain(k);
+    expect(JSON.stringify(again)).not.toContain("leak-me");
+  });
+
+  it("find-bugs #5: payer-approved after the approval window lapsed during the PayPal call is 409, not 500", async () => {
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp, holdTimeoutMs: 100 } });
+    vi.mocked(pp.authorizeOrder).mockImplementationOnce(
+      () => new Promise((_r, rej) => setTimeout(() => rej(Object.assign(new Error("422"), { status: 422 })), 200)),
+    );
+    const runId = await startRun();
+    const rowId = lastState(await waitEnd(runId)).rows[0].id;
+    const res = await act(runId, rowId, { action: "payer-approved", orderId: "O1" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/approval window expired/);
   });
 
   it("m5: GET /holds/:row (owner Bearer only) hands out the payer-action link", async () => {
@@ -507,7 +636,7 @@ describe("Approve with PayPal holds (PAYPAL_HOLD_PAYER)", () => {
     expect(rows.map((r) => r.status)).toEqual(["blocked", "awaiting_payer"]);
     expect(getRun(runId)!.guard.getState().rows[1].payerActionUrl).toBe(PAYER_URL);
     const done = msgs.find((m) => m.kind === "agent" && m.event.type === "done") as Extract<StreamMsg, { kind: "agent" }>;
-    expect(JSON.stringify(done.event)).toMatch(/waiting for your approval in PayPal — nothing is held or bought yet/);
+    expect(JSON.stringify(done.event)).toMatch(/waiting for your approval in PayPal. Nothing is held or bought yet/);
     expect(JSON.stringify(done.event)).not.toMatch(/I bought/);
   }, 20_000);
 
@@ -618,8 +747,11 @@ describe("R2 hardening", () => {
   });
 
   it("G: prepending a fake IP does not get a fresh rate-limit bucket", async () => {
+    vi.stubEnv("LIVE_RUNS_PER_IP_DAY", "50");
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp }, maxUnsettledPerIp: 50 });
     for (let i = 0; i < 6; i++) expect((await createRunRoute(post(MUG, { "x-forwarded-for": `7.7.7.${i}, 1.2.3.4` }))).status).toBe(201);
-    expect((await createRunRoute(post(MUG, { "x-forwarded-for": "8.8.8.8, 1.2.3.4" }))).status).toBe(429);
+    expect((await (await createRunRoute(post(MUG, { "x-forwarded-for": "8.8.8.8, 1.2.3.4" }))).json()).error).toMatch(/too many runs/);
+    vi.unstubAllEnvs();
   });
 
   it("E: a throwing listener is dropped; the agent run and other listeners keep going", async () => {
@@ -845,7 +977,7 @@ describe("R4 #11: copy", () => {
 });
 
 describe("R5 server bugs", () => {
-  it("B1: a Simulated (redteam) run never calls Gemini, even with GEMINI_API_KEY set; live still does", async () => {
+  it("S1: a Simulated (redteam) run uses the Gemini inspector when GEMINI_API_KEY is set (scripted agent, so every call is the inspector)", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const fetchMock = vi.fn(async () => new Response("no", { status: 400 }));
@@ -854,9 +986,7 @@ describe("R5 server bugs", () => {
       setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { paypal: pp } }); // no injected llm
       const geminiCalls = () => fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("generativelanguage")).length;
       await waitEnd(await startRun({ ...MUG, mode: "redteam" }));
-      expect(geminiCalls()).toBe(0);
-      await waitEnd(await startRun(MUG));
-      expect(geminiCalls()).toBeGreaterThan(0); // control: live runs keep the LLM inspector
+      expect(geminiCalls()).toBeGreaterThan(0); // holdRunner is a fake agent: these are inspector calls
     } finally {
       vi.unstubAllEnvs();
       vi.unstubAllGlobals();
@@ -864,7 +994,7 @@ describe("R5 server bugs", () => {
     }
   });
 
-  it("m9: real runRedteam through createRun, mug request: no Gemini fetch, row 1 blocked, row 2 held with an authorization", async () => {
+  it("m9/S1: real runRedteam through createRun, mug request: Gemini inspector called (agent stays scripted), regex fallback on error, row 1 blocked, row 2 held", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     const fetchMock = vi.fn(async () => new Response("no", { status: 400 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -872,7 +1002,8 @@ describe("R5 server bugs", () => {
       setRunDeps({ runners: { live: holdRunner, redteam: runRedteam }, guard: { paypal: pp } }); // production runner, no injected llm
       const { run } = createRun({ userRequest: "Buy me a camping coffee mug under $40", mode: "redteam" });
       await vi.waitFor(() => expect(run.ended).toBe(true), { timeout: 15_000 });
-      expect(fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("generativelanguage"))).toEqual([]);
+      // runRedteam never calls an LLM itself, so every Gemini request here is the guard's inspector (it answers 400 -> regex fallback).
+      expect(fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("generativelanguage")).length).toBeGreaterThan(0);
       const rows = run.guard.getState().rows;
       expect(rows).toHaveLength(2);
       expect(rows[0].status).toBe("blocked");

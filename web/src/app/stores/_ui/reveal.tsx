@@ -60,8 +60,14 @@ export function RevealControl({ hiddenCount }: { hiddenCount: number }) {
 }
 
 /** "Add to cart" on a demo store: agents only read these pages, so a click says so instead of doing nothing. */
-export function AddToCart({ className }: { className: string }) {
+export function AddToCart({ className, soldOut = false }: { className: string; soldOut?: boolean }) {
   const [said, setSaid] = useState(false);
+  if (soldOut)
+    return (
+      <button type="button" aria-disabled="true" className={`${className} cursor-not-allowed opacity-50`}>
+        Sold out
+      </button>
+    );
   return (
     <>
       <button type="button" aria-describedby="demo-cart-note" onClick={() => setSaid(true)} className={className}>
