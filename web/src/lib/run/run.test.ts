@@ -1206,4 +1206,12 @@ describe("orphaned-hold sweep (crash recovery)", () => {
     expect(isKnown("A1")).toBe(true);
     expect(isKnown("NOPE")).toBe(false);
   });
+
+  it("sweep cutoff follows the configured hold timeout (payer window + held window)", async () => {
+    resetRuns();
+    const sweepOrphans = vi.fn(async () => []);
+    setRunDeps({ runners: { live: holdRunner, redteam: holdRunner }, guard: { llm: cleanLlm, paypal: pp, holdTimeoutMs: 30_000 }, sweepOrphans });
+    await waitEnd(await startRun());
+    expect(sweepOrphans).toHaveBeenCalledWith(expect.objectContaining({ maxHoldLifetimeMs: 60_000 }));
+  });
 });

@@ -109,7 +109,7 @@ export function Button({
       {loading && (
         <span
           aria-hidden
-          className="size-3.5 animate-spin rounded-pill border-2 border-current border-r-transparent motion-reduce:animate-none"
+          className="size-3.5 shrink-0 animate-spin rounded-pill border-2 border-current border-r-transparent motion-reduce:animate-none"
         />
       )}
       <span>{children}</span>

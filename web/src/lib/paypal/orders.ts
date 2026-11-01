@@ -17,7 +17,7 @@
 //    Order status PAYER_ACTION_REQUIRED: "Redirect the payer to the \"rel\":\"payer-action\" HATEOAS link returned as
 //    part of the response prior to authorizing or capturing the order."
 import "server-only";
-import { PayPalError, paypalFetch } from "./client";
+import { paypalFetch } from "./client";
 
 export type CartItem = { name: string; quantity: number; unitAmount: number /* USD */; sku?: string };
 export type Merchant = { id: string; name: string };
@@ -27,7 +27,7 @@ export type OrderResult = {
   id: string;
   status: string; // CREATED | APPROVED | COMPLETED | PAYER_ACTION_REQUIRED | ...
   authorization?: Authorization;
-  /** Set only on the fallback path: buyer must approve in a browser before authorize. */
+  /** Payer path (or 3DS): buyer must approve in a browser before authorize. */
   approveUrl?: string;
 };
 /** Buyer-approval redirect targets (absolute URLs on this app). */
@@ -80,13 +80,9 @@ function toResult(o: RawOrder): OrderResult {
 }
 
 /**
- * Create an intent=AUTHORIZE order paid by the sandbox test card (no browser redirect).
- *
- * FALLBACK: if PayPal rejects the card payment_source (4xx, e.g. card processing not enabled on the
- * sandbox business account), re-create the order with no payment_source and return its rel:approve
- * link as `approveUrl`. A sandbox personal (buyer) account must open that link once and approve;
- * after that, authorizeOrder(id) works. A PAYER_ACTION_REQUIRED status (e.g. 3DS) also surfaces its
- * payer-action link as `approveUrl`.
+ * Create an intent=AUTHORIZE order paid by the sandbox test card (no browser redirect). A card 4xx throws (no
+ * fallback order: it would be orphaned and hide the decline). A PAYER_ACTION_REQUIRED status (e.g. 3DS) surfaces
+ * its payer-action link as `approveUrl`.
  *
  * `requestId` defaults to a fresh UUID; pass a stable one to make retries of the same call idempotent.
  *
@@ -119,30 +115,19 @@ export async function createAuthorizeOrder(
     });
     return toResult(order);
   }
-  try {
-    const order = await paypalFetch<RawOrder>("/v2/checkout/orders", {
-      requestId,
-      body: {
-        intent: "AUTHORIZE",
-        purchase_units: [unit],
-        payment_source: {
-          // cardName "CCREJECT-REFUSED" simulates a decline (card-testing page).
-          card: { name: opts.cardName ?? "CartHold", number: "4012888888881881", expiry: "2030-12", security_code: "123" },
-        },
+  // A card 4xx (decline, card processing off) throws as-is: the guard reports it as "Payment failed".
+  const order = await paypalFetch<RawOrder>("/v2/checkout/orders", {
+    requestId,
+    body: {
+      intent: "AUTHORIZE",
+      purchase_units: [unit],
+      payment_source: {
+        // cardName "CCREJECT-REFUSED" simulates a decline (card-testing page).
+        card: { name: opts.cardName ?? "CartHold", number: "4012888888881881", expiry: "2030-12", security_code: "123" },
       },
-    });
-    return toResult(order);
-  } catch (e) {
-    // 5xx / network: let caller retry with the same requestId. 4xx on the card: buyer-approval fallback.
-    if (!(e instanceof PayPalError) || e.status >= 500) throw e;
-    const order = await paypalFetch<RawOrder>("/v2/checkout/orders", {
-      // Different body -> must not reuse the card call's id; derived so a retry stays idempotent.
-      // A fresh UUID is 36 chars, so "-b" keeps it within PayPal's 38-char limit.
-      requestId: `${requestId}-b`,
-      body: { intent: "AUTHORIZE", purchase_units: [unit] },
-    });
-    return toResult(order);
-  }
+    },
+  });
+  return toResult(order);
 }
 
 /** POST /v2/checkout/orders/{id}/authorize -> money held. */

@@ -189,7 +189,7 @@ function HoldCard({ row, now, busy, simulated, fixture, nudge, viewOnly, onDecid
           )}
           <Button variant="ghost" size="lg" disabled={busy || viewOnly} onClick={() => onDecide(row, "reject")} className="max-sm:px-4">
             <span className="inline-flex items-center gap-1.5">
-              <X aria-hidden strokeWidth={1.75} className="size-4" />
+              <X aria-hidden strokeWidth={1.75} className="shrink-0 size-4" />
               Cancel
             </span>
           </Button>
@@ -209,12 +209,12 @@ function SimBadge() {
   );
 }
 
-/** QA2 #1: a judge without a sandbox buyer login needs a way forward. */
+/** QA2 #1: a visitor without a sandbox buyer account needs a way forward. */
 function JudgeHint({ nudge }: { nudge: boolean }) {
   return (
     <p role={nudge ? "status" : undefined} className={cx("text-xs text-ink-muted", nudge && "rounded-md border border-info/30 bg-surface-2 px-3 py-2 text-sm text-ink")}>
       {nudge && "PayPal closed without an approval. "}
-      Judges: the sandbox buyer login is in the Devpost testing instructions. No login?{" "}
+      Approving needs a PayPal sandbox buyer account. No account?{" "}
       <Link href={RECORDED_RUN_HREF} className="text-info underline underline-offset-4">
         Watch the recorded run
       </Link>{" "}
@@ -236,7 +236,7 @@ function PendingCard({ row, simulated }: { row: DecisionRow; simulated: boolean 
       <p className="mt-3 text-sm font-medium text-ink">{row.merchant}</p>
       <p className="text-xs text-ink-muted">{row.items}</p>
       <p className="mt-3 flex items-center gap-2 text-xs text-ink-muted">
-        <span aria-hidden className="size-1.5 animate-shimmer rounded-pill bg-hold" />
+        <span aria-hidden className="shrink-0 size-1.5 animate-shimmer rounded-pill bg-hold" />
         Checks passed. Waiting for PayPal to authorize the funds.
       </p>
       <Receipt row={row} className="mt-3" />

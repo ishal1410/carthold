@@ -7,6 +7,9 @@ import { acquireStream, clientIp } from "../../../../../lib/run/limits";
 const STREAMS_PER_RUN = 10;
 // Sent before we close a settled run's stream: EventSource would otherwise reconnect (~3s) and replay forever.
 const NO_RECONNECT = "retry: 86400000\n\n";
+/** SSE comment sent while idle (e.g. a 5-min hold): proxies drop silent connections after ~100 s. Clients ignore it. */
+const HEARTBEAT = ": ping\n\n";
+const HEARTBEAT_MS = 25_000;
 /** Row fields viewers may see. payerActionUrl is never one (m5): anyone with the run URL can watch, and the link would
  * let a viewer approve with their own PayPal account; the owner gets it from GET /api/runs/:id/holds/:row (Bearer). */
 const VIEWER_FIELDS = [
@@ -48,9 +51,17 @@ export async function GET(req: Request, ctx: { params: Promise<{ runId: string }
       let open = true;
       let live = false; // false during history replay: never close mid-replay
       let unsubscribe = () => {};
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(enc.encode(HEARTBEAT));
+        } catch {
+          cleanup();
+        }
+      }, HEARTBEAT_MS);
       cleanup = () => {
         if (!open) return;
         open = false;
+        clearInterval(heartbeat);
         unsubscribe();
         release();
         try {

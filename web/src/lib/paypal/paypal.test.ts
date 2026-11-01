@@ -145,20 +145,11 @@ describe("orders", () => {
     expect((calls[1].init.headers as Record<string, string>)["PayPal-Request-Id"]).toBe("g1-d1-auth");
   });
 
-  it("falls back to approve link when card payment_source is rejected", async () => {
+  it("a card 4xx throws the real decline: no fallback order without a payment source", async () => {
     mockPayPal({ cardRejected: true });
-    const r = await createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant);
-    expect(r).toEqual({ id: "ORDER2", status: "CREATED", approveUrl: "https://sandbox/approve" });
-    const ids = calls.slice(1).map((c) => (c.init.headers as Record<string, string>)["PayPal-Request-Id"]);
-    expect(ids[0]).not.toBe(ids[1]);
-    expect(ids.every((id) => id.length <= 38)).toBe(true);
-  });
-
-  it("#22 fallback create derives its request id from the caller's (deterministic retry)", async () => {
-    mockPayPal({ cardRejected: true });
-    await createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant, { requestId: "g1-d1-auth" });
-    const ids = calls.slice(1).map((c) => (c.init.headers as Record<string, string>)["PayPal-Request-Id"]);
-    expect(ids).toEqual(["g1-d1-auth", "g1-d1-auth-b"]);
+    await expect(createAuthorizeOrder([{ name: "Mug", quantity: 1, unitAmount: 30 }], merchant, { requestId: "g1-d1-auth" }))
+      .rejects.toMatchObject({ status: 422 });
+    expect(paths()).toEqual(["POST /v1/oauth2/token", "POST /v2/checkout/orders"]); // one create, never a second
   });
 
   it("#6 exposes a DENIED authorization status faithfully", async () => {

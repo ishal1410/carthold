@@ -3,3 +3,5 @@ node_modules/
 !.env.example
 .next/
 spike/_pkg/
+.video/
+__pycache__/

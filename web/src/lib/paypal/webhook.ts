@@ -102,11 +102,18 @@ type RawOrder = { purchase_units?: { description?: string; payments?: { authoriz
 /** PayPal's webhooks-events filter rejects fractional seconds ("...41.829Z" -> 400 VALIDATION_ERROR, live 2026-10-31). */
 export const rfc3339 = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 
-export async function sweepOrphanedHolds(o: { isKnown: (authId: string) => boolean; now?: number }): Promise<string[]> {
+let warnedNoWebhook = false;
+
+export async function sweepOrphanedHolds(o: { isKnown: (authId: string) => boolean; now?: number; maxHoldLifetimeMs?: number }): Promise<string[]> {
+  // PayPal only stores PAYMENT.AUTHORIZATION.CREATED events for a configured webhook: without one the sweep finds nothing.
+  if (!process.env.PAYPAL_WEBHOOK_ID?.trim() && !warnedNoWebhook) {
+    warnedNoWebhook = true;
+    console.warn("[carthold] PAYPAL_WEBHOOK_ID not set: PayPal records no authorization events, so the orphaned-hold sweep is a no-op");
+  }
   const voided: string[] = [];
-  // No live hold can outlive MAX_HOLD_LIFETIME_MS (awaiting + held windows), in this process or any other, so an
+  // No live hold can outlive the max hold lifetime (awaiting + held windows), in this process or any other, so an
   // older CartHold authorization still CREATED is orphaned whoever made it (e.g. an instance killed mid-deploy).
-  const cutoff = (o.now ?? Date.now()) - MAX_HOLD_LIFETIME_MS - ORPHAN_MARGIN_MS;
+  const cutoff = (o.now ?? Date.now()) - (o.maxHoldLifetimeMs ?? MAX_HOLD_LIFETIME_MS) - ORPHAN_MARGIN_MS;
   const q = new URLSearchParams({
     event_type: "PAYMENT.AUTHORIZATION.CREATED",
     start_time: rfc3339((o.now ?? Date.now()) - 30 * DAY),

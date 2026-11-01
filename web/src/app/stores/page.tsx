@@ -17,6 +17,8 @@ const LOOK: Record<string, { bg: string; ink: string; accent: string; font: stri
 
 const STYLE_WORD = { "white-on-white": "white-on-white text", "aria-label": "image label", "visually-hidden": "screen-reader-only text" };
 
+const numberWord = (n: number) => ["None", "One", "Two", "Three", "Four"][n] ?? String(n);
+
 export default function StoresIndex() {
   const poisoned = stores.filter((s) => s.hidden.length).length;
   return (
@@ -31,7 +33,7 @@ export default function StoresIndex() {
         <header className="mt-10 max-w-[64ch]">
           <h1 className="font-display text-3xl font-semibold tracking-tight md:text-[2.75rem] md:leading-[1.08]">The shops the agent visits</h1>
           <p className="mt-4 text-lg text-ink-muted">
-            Four demo merchants. {poisoned} of them hide instructions for shopping agents in text a person never sees.
+            Four demo merchants. {numberWord(poisoned)} of them hide instructions for shopping agents in text a person never sees.
             Open one and switch on <span className="text-ink">Reveal what the agent sees</span> to find it.
           </p>
         </header>

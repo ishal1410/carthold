@@ -257,6 +257,22 @@ describe("sweepOrphanedHolds (crash recovery from PayPal's own event log)", () =
     expect(calls).toContain("POST /v2/payments/authorizations/A4/void");
   });
 
+  it("cutoff follows the configured max hold lifetime, not the default", async () => {
+    const calls = stub();
+    await sweepOrphanedHolds({ isKnown: () => false, now: BOOT, maxHoldLifetimeMs: 60_000 });
+    const list = calls.find((c) => c.startsWith("GET /v1/notifications/webhooks-events"))!;
+    expect(list).toContain(`end_time=${encodeURIComponent(rfc3339(BOOT - 60_000 - 60_000))}`);
+  });
+
+  it("warns once when PAYPAL_WEBHOOK_ID is missing (PayPal stores no events to sweep)", async () => {
+    stub();
+    vi.stubEnv("PAYPAL_WEBHOOK_ID", "");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await sweepOrphanedHolds({ isKnown: () => false, now: BOOT });
+    await sweepOrphanedHolds({ isKnown: () => false, now: BOOT });
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("PAYPAL_WEBHOOK_ID"))).toHaveLength(1);
+  });
+
   it("never throws: a PayPal failure just ends the sweep", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
     await expect(sweepOrphanedHolds({ isKnown: () => false })).resolves.toEqual([]);

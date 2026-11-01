@@ -20,7 +20,7 @@ function summarizeArgs(name: string, args: Record<string, unknown>) {
   if (name === "read_store_page") return String(args.slug ?? "");
   if (name === "propose_order") {
     const items = Array.isArray(args.items) ? (args.items as { name?: string; quantity?: number; unitPriceUsd?: number }[]) : [];
-    return `${args.merchant ?? "?"}: ${items.map((i) => `${i.quantity} x ${i.name} @ $${i.unitPriceUsd}`).join(", ")}`;
+    return `${args.merchant ?? "?"}: ${items.map((i) => `${i.quantity} x ${i.name} @ $${i.unitPriceUsd}`).join(", ")}`;
   }
   return "";
 }
@@ -192,7 +192,7 @@ export function Trace({ events, phase, mode, rows, viewOnly = false, className }
                   time={labels[n]}
                   title={
                     <span className="inline-flex items-center gap-1.5 text-ink">
-                      <t.icon aria-hidden strokeWidth={1.5} className="size-3.5 text-ink-faint" />
+                      <t.icon aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-ink-faint" />
                       {t.label}
                     </span>
                   }

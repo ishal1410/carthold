@@ -62,7 +62,7 @@ export function Receipt({ row, className, mock = false }: { row: Ids; className?
     <div className={cx("rounded-md border border-line bg-surface-2 px-3 py-2", className)}>
       <p className="flex items-center justify-between gap-2 text-2xs text-ink-faint">
         <span className="inline-flex items-center gap-1.5">
-          <CreditCard aria-hidden strokeWidth={1.5} className="size-3.5" />
+          <CreditCard aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5" />
           PayPal receipt
         </span>
         <span className="rounded-xs border border-line px-1.5">{mock ? "Mock ids (recorded run)" : "PayPal sandbox"}</span>

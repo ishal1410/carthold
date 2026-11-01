@@ -33,7 +33,7 @@ function Hidden({ segs }: { segs: HiddenSegment[] }) {
   return segs.map((h) => (
     <mark key={h.text} className="mt-3 block rounded-[var(--radius-sm)] border border-blocked/35 bg-blocked-soft px-3 py-2.5 text-blocked">
       <span className="mb-1 flex items-center gap-1.5 font-sans text-2xs font-medium">
-        <ScanEye aria-hidden strokeWidth={1.75} className="size-3.5" />
+        <ScanEye aria-hidden strokeWidth={1.75} className="shrink-0 size-3.5" />
         Hidden: {styleLabel[h.style]}
       </span>
       <span className="text-pretty">{h.text}</span>
@@ -149,14 +149,14 @@ export function InjectionReveal() {
       >
         <Panel as="section" aria-label="What you see">
           <h3 className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
-            <Eye aria-hidden strokeWidth={1.5} className="size-4 text-ink-muted" />
+            <Eye aria-hidden strokeWidth={1.5} className="shrink-0 size-4 text-ink-muted" />
             What you see
           </h3>
           <ShopperView store={store} />
         </Panel>
         <Panel as="section" tone="blocked" aria-label="What the agent reads">
           <h3 className="mb-1 flex items-center gap-2 text-sm font-medium text-ink">
-            <ScanEye aria-hidden strokeWidth={1.5} className="size-4 text-blocked" />
+            <ScanEye aria-hidden strokeWidth={1.5} className="shrink-0 size-4 text-blocked" />
             What the agent reads
           </h3>
           <AgentView store={store} />

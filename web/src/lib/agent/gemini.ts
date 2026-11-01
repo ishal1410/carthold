@@ -1,3 +1,5 @@
+import type { Part } from "./agent"; // type-only: erased, so no runtime import cycle
+
 // One Gemini REST call with a 20s timeout and a single retry on 429/5xx.
 // Errors carry only the status; upstream bodies are logged server-side, never returned (FINDINGS #12, #24).
 /** The one Gemini model every call uses (agent + inspector). Pinned, not the -latest alias: Google hot-swaps aliases on new releases (ai.google.dev/gemini-api/docs/models). */
@@ -5,6 +7,13 @@ export const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 const TIMEOUT_MS = 20_000;
 const DEFAULT_RETRY_MS = 2_000;
+
+/** The slice of a generateContent response the callers read. */
+export type GeminiResponse = {
+  // text?: any part may carry text (Gemini can mix text into a functionCall part); lets callers read parts[0].text.
+  candidates?: { content?: { parts?: (Part & { text?: string })[] } }[];
+  error?: { code?: number; message?: string; status?: string };
+};
 
 /** Gemini still answered 429 after the retry (free tier: 15 requests/min). */
 export class GeminiRateLimitError extends Error {
@@ -27,8 +36,7 @@ function retryHint(res: Response, body: string): number | null {
 }
 
 /** maxDelayMs caps the wait before the retry (tests pass 0). A 429 hint above it throws at once (m3: the retry would be refused anyway). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function postGemini(modelMethod: string, body: unknown, maxDelayMs = 10_000): Promise<any> {
+export async function postGemini(modelMethod: string, body: unknown, maxDelayMs = 10_000): Promise<GeminiResponse> {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(BASE + modelMethod, {
       method: "POST",
@@ -36,7 +44,7 @@ export async function postGemini(modelMethod: string, body: unknown, maxDelayMs 
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (res.ok) return res.json();
+    if (res.ok) return (await res.json()) as GeminiResponse;
     const retryable = res.status === 429 || res.status >= 500;
     const text = await res.text();
     console.error(`gemini ${res.status} (attempt ${attempt + 1}):`, text.slice(0, 500));

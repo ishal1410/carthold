@@ -180,6 +180,16 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
   // PayPal-Request-Id per row+step: a retry of the same step is idempotent, steps never collide. <= 38 chars.
   const guardId = crypto.randomUUID().slice(0, 8);
   const rid = (row: DecisionRow, step: "auth" | "authz" | "cap" | "void") => `${guardId}-${row.id}-${step}`;
+  // Each void attempt gets its own id (PayPal replays a cached failure for a reused id); the first stays rid(row,"void").
+  const voidTries = new Map<string, number>();
+  const voidRid = (row: DecisionRow) => {
+    const n = voidTries.get(row.id) ?? 0;
+    voidTries.set(row.id, n + 1);
+    return n ? `${rid(row, "void")}-${n}` : rid(row, "void");
+  };
+  // Proposals are decided one at a time: verdictFor reads committed / auto-paid money, then awaits the inspector.
+  // ponytail: one queue per guard (run); only the verdict + row insert is serialized, not the PayPal calls.
+  let deciding: Promise<unknown> = Promise.resolve();
 
   const sum = (pred: (r: DecisionRow) => boolean) => round2(rows.filter(pred).reduce((s, r) => s + r.amountUsd, 0));
   const getState = (): GuardState => ({
@@ -314,7 +324,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
   /** Money may be held under authorizationId: void it ("error", nothing held) or, if the void fails, "unknown". */
   async function voidOrUnknown(row: DecisionRow, authorizationId: string, why: string, short = why): Promise<string> {
     try {
-      await paypal.voidAuthorization(authorizationId, rid(row, "void"));
+      await paypal.voidAuthorization(authorizationId, voidRid(row));
       update(row, { status: "error", expiresAt: undefined, reasons: [...row.reasons, `${why}; authorization voided`] });
       return `Payment failed: ${short}`;
     } catch (e) {
@@ -339,6 +349,15 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
   }
 
   async function onProposeOrder(order: AgentOrder): Promise<string> {
+    const decided = deciding.then(() => decide(order));
+    deciding = decided.catch(() => {});
+    const { row, v } = await decided;
+    if (v.verdict === "block") return `BLOCKED by CartHold: ${v.reasons.join("; ")}`;
+    return pay(order, row, v);
+  }
+
+  /** Verdict + row insert (serialized by onProposeOrder): the row counts against the budget before the next verdict. */
+  async function decide(order: AgentOrder) {
     const id = `d${++seq}`;
     const time = new Date().toISOString();
     let v: Awaited<ReturnType<typeof verdictFor>>;
@@ -363,8 +382,10 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
     };
     rows.push(row);
     emit();
-    if (v.verdict === "block") return `BLOCKED by CartHold: ${v.reasons.join("; ")}`;
+    return { row, v };
+  }
 
+  async function pay(order: AgentOrder, row: DecisionRow, v: Awaited<ReturnType<typeof verdictFor>>): Promise<string> {
     try {
       const store = stores.find((s) => s.name.toLowerCase() === row.merchant.toLowerCase());
       const merchant = { id: store?.merchantId ?? order.sourceSlug, name: row.merchant };
@@ -441,7 +462,7 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
       await capture(row, row.authorizationId, note);
     } else {
       try {
-        await paypal.voidAuthorization(row.authorizationId, rid(row, "void"));
+        await paypal.voidAuthorization(row.authorizationId, voidRid(row));
         update(row, { status: "voided", expiresAt: undefined, reasons: [...row.reasons, note] });
       } catch (e) {
         // Void failed: the money may still be held, so it stays counted.
@@ -472,10 +493,10 @@ export function createGuard({ mandate, llm, paypal = orders, holdTimeoutMs = HOL
       update(row, { unresolvable: true, reasons: [...row.reasons, `unresolvable: ${row.paypalOrderId ? "PayPal outcome still unknown" : "no PayPal order id"}, check the PayPal dashboard`] });
   }
 
-  /** Finish the void of a decided authorization (same idempotent request id every time). Failure: stays unknown. */
+  /** Finish the void of a decided authorization (fresh request id per attempt). Failure: stays unknown. */
   async function retryVoid(row: DecisionRow, authId: string) {
     try {
-      await paypal.voidAuthorization(authId, rid(row, "void"));
+      await paypal.voidAuthorization(authId, voidRid(row));
       if (row.status === "unknown") update(row, { status: "voided", authorizationId: authId, reasons: [...row.reasons, "resolved: void retried, authorization voided"] });
     } catch (e) {
       ppError(e, "void retry"); // stays unknown and counted; the next sweep retries

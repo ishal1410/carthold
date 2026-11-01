@@ -172,7 +172,7 @@ export default function Home() {
                 <span className="figures pt-1 text-sm text-hold">{String(i + 1).padStart(2, "0")}</span>
                 <div>
                   <h3 className="flex items-center gap-2.5 font-display text-xl font-semibold tracking-tight text-ink">
-                    <s.icon aria-hidden strokeWidth={1.5} className="size-5 text-ink-muted" />
+                    <s.icon aria-hidden strokeWidth={1.5} className="shrink-0 size-5 text-ink-muted" />
                     {s.title}
                   </h3>
                   <p className="mt-2 max-w-xl text-pretty text-ink-muted">{s.body}</p>
@@ -190,7 +190,7 @@ export default function Home() {
           <div className="grid gap-4 md:grid-cols-2">
             <Panel as="div" aria-label="Real">
               <h3 className="flex items-center gap-2 text-sm font-medium text-paid">
-                <CircleCheck aria-hidden strokeWidth={1.5} className="size-4" />
+                <CircleCheck aria-hidden strokeWidth={1.5} className="shrink-0 size-4" />
                 Real
               </h3>
               <ul className="mt-4 space-y-3 text-sm text-ink">
@@ -207,7 +207,7 @@ export default function Home() {
             </Panel>
             <Panel as="div" aria-label="Simulated">
               <h3 className="flex items-center gap-2 text-sm font-medium text-warning">
-                <SlidersHorizontal aria-hidden strokeWidth={1.5} className="size-4" />
+                <SlidersHorizontal aria-hidden strokeWidth={1.5} className="shrink-0 size-4" />
                 Simulated
               </h3>
               <ul className="mt-4 space-y-3 text-sm text-ink">

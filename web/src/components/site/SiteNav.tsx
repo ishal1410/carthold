@@ -45,7 +45,7 @@ export function SiteNav({ variant }: SiteNavProps) {
   );
 
   return (
-    <header className="sticky top-0 z-30 px-3 pt-3 md:px-6">
+    <header className="sticky top-0 z-30 px-3 pt-3 max-md:bg-canvas/85 max-md:pb-2 max-md:backdrop-blur-xl md:px-6">
       <nav
         aria-label="Main"
         className="glass bg-[color-mix(in_oklab,var(--canvas)_96%,transparent)]! mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 rounded-pill pl-4 pr-2 shadow-float"

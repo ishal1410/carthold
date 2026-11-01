@@ -91,8 +91,8 @@ describe("R4-2 resolve attempts are counted on every branch", () => {
     // 5 immediate retries, then backoff: the extra calls inside the window do not hit PayPal.
     expect(voidAuthorization).toHaveBeenCalledTimes(6);
     expect(g.getState()).toMatchObject({ unresolvable: [], committedUsd: 18 });
-    // Same idempotent PayPal-Request-Id on every void retry.
-    expect(new Set(voidAuthorization.mock.calls.map((c) => (c as unknown[])[1])).size).toBe(1);
+    // A fresh PayPal-Request-Id on every void attempt (a reused id replays the cached failure).
+    expect(new Set(voidAuthorization.mock.calls.map((c) => (c as unknown[])[1])).size).toBe(6);
     voidOk = true;
     vi.advanceTimersByTime(10 * 60_000);
     expect((await g.resolveUnknown("d1")).status).toBe("voided");
@@ -170,5 +170,41 @@ describe("m7: token failure maps to error, not unknown", () => {
     expect(s.unknownRows).toEqual([]);
     expect(s.committedUsd).toBe(0);
     expect(s.amountAtRiskUsd).toBe(0);
+  });
+});
+
+describe("review fixes", () => {
+  it("a void retry after a 5xx uses a fresh PayPal-Request-Id (<= 38 chars)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let voidN = 0;
+    const paypal = pp({
+      captureAuthorization: vi.fn(async () => { throw err5(); }),
+      voidAuthorization: vi.fn(async () => { if (voidN++ === 0) throw err5(); return {}; }),
+      getOrder: vi.fn(async () => ({ id: "O1", status: "COMPLETED", authorization: { id: "A1", status: "AUTHORIZED" } })),
+    });
+    const g = createGuard({ mandate: M("one coffee blend under $40"), paypal });
+    await g.onProposeOrder(coffee);
+    await g.resolveUnknown("d1");
+    const ids = (paypal.voidAuthorization as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1] as string);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+    expect(ids.every((id) => id.length <= 38)).toBe(true);
+  });
+
+  it("concurrent proposals cannot jointly exceed the budget", async () => {
+    const paypal = pp();
+    const g = createGuard({ mandate: M("two coffee blends under $40", { budgetUsd: 30, approvalThresholdUsd: 100 }), paypal, llm: null });
+    const [a, b] = await Promise.all([g.onProposeOrder(coffee), g.onProposeOrder(coffee)]);
+    expect(a).toMatch(/^Paid/);
+    expect(b).toMatch(/^BLOCKED/);
+    expect(g.getState().committedUsd).toBe(18);
+  });
+
+  it("concurrent allow proposals cannot jointly pass the ask-me limit", async () => {
+    const paypal = pp();
+    const g = createGuard({ mandate: M("two coffee blends under $40", { approvalThresholdUsd: 25 }), paypal, llm: null });
+    const [a, b] = await Promise.all([g.onProposeOrder(coffee), g.onProposeOrder(coffee)]);
+    expect(a).toMatch(/^Paid/);
+    expect(b).toMatch(/^HELD/);
   });
 });

@@ -3,7 +3,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { runAgent, type AgentEvent, type RunAgentOptions } from "../agent/agent";
-import { createGuard, type Guard, type GuardOptions, type GuardState, type PayPalEvent } from "../guard/guard";
+import { createGuard, HOLD_TIMEOUT_MS, type Guard, type GuardOptions, type GuardState, type PayPalEvent } from "../guard/guard";
 import { sweepOrphanedHolds } from "../paypal/webhook";
 import { type Mandate } from "../policy/policy";
 import { runRedteam } from "../redteam/redteam";
@@ -57,7 +57,7 @@ export type RunDeps = {
   /** Clock for the unresolvable-row TTL (default Date.now). */
   now?: () => number;
   /** Crash recovery: voids CartHold authorizations older than any live hold can be (default: lib/paypal/webhook sweepOrphanedHolds). */
-  sweepOrphans?: (o: { isKnown: (authId: string) => boolean }) => Promise<unknown>;
+  sweepOrphans?: (o: { isKnown: (authId: string) => boolean; maxHoldLifetimeMs: number }) => Promise<unknown>;
 };
 
 /** Thrown by createRun when every stored run is still running or has a pending hold. */
@@ -115,13 +115,15 @@ function kickOrphanSweep(d: RunDeps, now = Date.now()) {
   const first = !g.__cartholdOrphanSweep;
   g.__cartholdOrphanSweep = now;
   const isKnown = (authId: string) => [...runs.values()].some((r: Run) => r.guard.getState().rows.some((row) => row.authorizationId === authId));
-  void d.sweepOrphans({ isKnown }).catch((e) => console.error("orphaned-hold sweep failed:", e));
+  // Payer window + held window, each holdTimeoutMs (guard default HOLD_TIMEOUT_MS: 10 min, plus the sweep's margin).
+  const maxHoldLifetimeMs = 2 * (d.guard?.holdTimeoutMs ?? HOLD_TIMEOUT_MS);
+  void d.sweepOrphans({ isKnown, maxHoldLifetimeMs }).catch((e) => console.error("orphaned-hold sweep failed:", e));
   if (first) setInterval(() => kickOrphanSweep(deps()), ORPHAN_SWEEP_EVERY_MS).unref?.();
 }
 
 const unknownRowIds = (state: GuardState) => state.rows.filter((r) => r.status === "unknown").map((r) => r.id);
-// Feature-detected: guard flags rows it gave up resolving in state.unresolvable (R3 #5).
-const unresolvableIds = (state: GuardState) => new Set((state as { unresolvable?: string[] }).unresolvable ?? []);
+/** Rows the guard gave up resolving (R3 #5). */
+const unresolvableIds = (state: GuardState) => new Set(state.unresolvable);
 /** Unknown rows still worth polling PayPal for. */
 const pollableIds = (state: GuardState) => {
   const dead = unresolvableIds(state);
@@ -167,7 +169,7 @@ function push(run: Run, msg: StreamMsg) {
   for (const l of [...run.listeners]) deliver(run, l, msg);
 }
 
-/** Starts/stops the unknown-row poll. Feature-detected: guard.resolveUnknown lands with the guard's fix. */
+/** Starts/stops the unknown-row poll. */
 function syncResolvePoll(run: Run, state: GuardState, everyMs: number) {
   const has = pollableIds(state).length > 0;
   if (!has) {
@@ -177,13 +179,11 @@ function syncResolvePoll(run: Run, state: GuardState, everyMs: number) {
   }
   if (run.resolveTimer) return;
   run.resolveTimer = setInterval(() => {
-    const resolve = (run.guard as { resolveUnknown?: (rowId: string) => unknown }).resolveUnknown;
     const ids = pollableIds(run.guard.getState());
     if (!ids.length) return syncResolvePoll(run, run.guard.getState(), everyMs);
-    if (!resolve) return;
     for (const id of ids)
       void Promise.resolve()
-        .then(() => resolve.call(run.guard, id))
+        .then(() => run.guard.resolveUnknown(id))
         .catch((e) => console.error(`run ${run.id} resolveUnknown(${id}) failed:`, e));
   }, everyMs);
   (run.resolveTimer as { unref?: () => void }).unref?.();
@@ -238,8 +238,6 @@ export function createRun(input: CreateRunInput, { origin, ip }: { origin?: stri
   };
   runs.set(run.id, run);
   kickOrphanSweep(d);
-  // Feature-detected: guard.notePageRead lands with the guard's page-provenance fix (FINDINGS #2).
-  const notePageRead = (guard as { notePageRead?: (slug: string) => void }).notePageRead;
 
   guard.subscribe((state) => {
     syncResolvePoll(run, state, d.resolveEveryMs ?? 30_000);
@@ -257,7 +255,7 @@ export function createRun(input: CreateRunInput, { origin, ip }: { origin?: stri
           if (g.__cartholdShuttingDown) await Promise.allSettled(guard.getState().pendingHolds.map((id) => guard.systemVoid(id)));
           return result;
         },
-        onPageRead: notePageRead ? (slug) => notePageRead.call(guard, slug) : undefined,
+        onPageRead: guard.notePageRead,
         onEvent: (event) => push(run, { kind: "agent", event }),
       }),
     )

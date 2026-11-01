@@ -376,6 +376,7 @@ function Demo({ fixture }: { fixture: boolean }) {
       mode={mode}
       setMode={setMode}
       running={running}
+      waiting={running && (guard.pendingHolds.length > 0 || guard.rows.some((r) => r.status === "awaiting_payer"))}
       blocked={runBlockReason(guard, fixture)}
       onRun={run}
       fixture={fixture}
@@ -453,11 +454,11 @@ function RunBar(p: {
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 md:px-6">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {p.fixture ? (
-            <span title="A recording of the real guard on sample orders. No agent, Gemini or PayPal calls happen on this page.">
+            <span title="A recording of the real guard on sample orders. It replays a Simulated run; no live agent, Gemini or PayPal calls happen on this page.">
               <Badge tone="neutral" icon={<Play strokeWidth={1.5} />}>
                 Recorded run
               </Badge>
-              <span className="sr-only">: a recording of the real guard on sample orders. No agent, Gemini or PayPal calls happen on this page.</span>
+              <span className="sr-only">: a recording of the real guard on sample orders. It replays a Simulated run; no live agent, Gemini or PayPal calls happen on this page.</span>
             </span>
           ) : (
             <Badge tone="info">PayPal sandbox</Badge>
@@ -465,7 +466,7 @@ function RunBar(p: {
           {p.simulated ? <Badge tone="hold">Simulated compromised agent</Badge> : <Badge tone="neutral">Live Gemini agent</Badge>}
           {p.running && (
             <span className="inline-flex items-center gap-1.5 text-2xs text-ink-muted">
-              <span aria-hidden className="size-1.5 animate-shimmer rounded-pill bg-paid" />
+              <span aria-hidden className="shrink-0 size-1.5 animate-shimmer rounded-pill bg-paid" />
               Running
             </span>
           )}
@@ -506,19 +507,21 @@ function Kpis({ guard }: { guard: GuardState }) {
     <dl className="grid w-full grid-cols-3 gap-4 lg:ml-auto lg:flex lg:w-auto lg:items-center lg:gap-8">
       <div className="min-w-0">
         <dt className="flex items-center gap-1.5 text-2xs text-ink-muted">
-          <Hourglass aria-hidden strokeWidth={1.5} className="size-3.5 text-hold" />
+          <Hourglass aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-hold" />
           Held in PayPal
         </dt>
         <dd className={cx("text-base md:text-xl", held ? "text-hold" : "text-ink-muted")}>
           <AnimatedNumber value={heldUsd} />
           {awaitingUsd > 0 && (
-            <span className="figures mt-1 block text-2xs text-ink-muted">+{usd(awaitingUsd)} reserved, awaiting approval</span>
+            <span className="figures mt-1 block text-2xs text-ink-muted">
+              {heldUsd > 0 ? `+${usd(awaitingUsd)} awaiting your approval` : `${usd(awaitingUsd)} awaiting your approval, nothing held yet`}
+            </span>
           )}
         </dd>
       </div>
       <div className="min-w-0">
         <dt className="flex items-center gap-1.5 text-2xs text-ink-muted">
-          <Ban aria-hidden strokeWidth={1.5} className="size-3.5 text-blocked" />
+          <Ban aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-blocked" />
           Blocked
         </dt>
         <dd className={cx("text-base md:text-xl", stopped ? "text-ink" : "text-ink-muted")}>
@@ -528,7 +531,7 @@ function Kpis({ guard }: { guard: GuardState }) {
       <div className="min-w-0 lg:w-52">
         <dt className="flex items-center justify-between gap-2 text-2xs text-ink-muted">
           <span className="inline-flex items-center gap-1.5">
-            <Wallet aria-hidden strokeWidth={1.5} className="size-3.5 text-paid" />
+            <Wallet aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-paid" />
             Budget used
           </span>
           <span className="figures max-sm:hidden">of {usd(MANDATE.budgetUsd)}</span>
@@ -579,13 +582,13 @@ function Rules() {
       </span>
       {items.map((i) => (
         <span key={i.text} className="inline-flex items-center gap-1.5">
-          <i.icon aria-hidden strokeWidth={1.5} className="size-3.5 text-ink-faint" />
+          <i.icon aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-ink-faint" />
           {i.text}
         </span>
       ))}
       <details className="group relative">
         <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-xs hover:text-ink [&::-webkit-details-marker]:hidden">
-          <Store aria-hidden strokeWidth={1.5} className="size-3.5 text-ink-faint" />
+          <Store aria-hidden strokeWidth={1.5} className="shrink-0 size-3.5 text-ink-faint" />
           <span className="underline decoration-line-strong underline-offset-4">{MANDATE.merchantAllowlist.length} allowed stores</span>
         </summary>
         <ul className="absolute top-full left-0 z-20 mt-2 w-56 space-y-1 rounded-md border border-line-strong bg-surface-2 p-3 shadow-float">
@@ -607,6 +610,8 @@ function Composer(p: {
   mode: Mode;
   setMode: (m: Mode) => void;
   running: boolean;
+  /** The run is open but the agent is idle until the user decides a hold. */
+  waiting: boolean;
   /** Why a new run is not allowed right now (a live hold is waiting), or null. */
   blocked: string | null;
   onRun: () => void;
@@ -661,11 +666,11 @@ function Composer(p: {
         size={p.compact ? "md" : "lg"}
         disabled={p.running || !p.request.trim() || !!p.blocked}
         aria-describedby={p.blocked ? "run-blocked" : undefined}
-        loading={p.running}
+        loading={p.running && !p.waiting}
         icon={!p.running && <Play strokeWidth={1.75} />}
         className="w-full"
       >
-        {p.running ? "Agent is shopping" : p.fixture ? "Reset recording" : "Run agent"}
+        {p.waiting ? "Waiting on your approval" : p.running ? "Agent is shopping" : p.fixture ? "Replay recording" : "Run agent"}
       </Button>
       {p.blocked && (
         <p id="run-blocked" className="mt-1.5 text-xs text-hold">
@@ -716,7 +721,7 @@ function Composer(p: {
       </div>
       {p.fixture && (
         <p className="mt-3 text-xs text-ink-faint">
-          Recorded run: a replay of the real guard on sample orders. No agent, Gemini or PayPal calls happen here.{" "}
+          Recorded run: a replay of a Simulated run through the real guard on sample orders. No live agent, Gemini or PayPal calls happen here.{" "}
           <a href="/demo" className="text-info underline-offset-4 hover:underline">
             Run it live
           </a>
@@ -832,7 +837,7 @@ function RevealDialog({ reveal, onClose }: { reveal: { row: DecisionRow; text: s
               </p>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose} autoFocus aria-label="Close">
-              <X aria-hidden strokeWidth={1.75} className="size-4" />
+              <X aria-hidden strokeWidth={1.75} className="shrink-0 size-4" />
             </Button>
           </div>
           <div className={cx("grid gap-6 px-5 py-5 md:px-6", showPage && "md:grid-cols-[minmax(0,1fr)_280px]")}>
